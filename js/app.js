@@ -7675,3 +7675,25 @@ function refreshQuickAddView() {
   else if (page === 'timer') renderTimer();
   else if (page === 'library') renderLibrary();
 }
+
+/* ===== هوية v3: عنوان الصفحة يظهر مرة واحدة (الترويسة العلوية هي المرجع) ===== */
+(function dedupePageTitle() {
+  const header = document.getElementById('page-title');
+  const content = document.getElementById('content');
+  if (!header || !content) return;
+  let busy = false;
+  const run = () => {
+    if (busy) return; busy = true;
+    const t = (header.textContent || '').trim();
+    content.querySelectorAll('.page-head .page-title').forEach((el) => {
+      el.classList.toggle('is-dup', (el.textContent || '').trim() === t);
+    });
+    busy = false;
+  };
+  if (window.MutationObserver) {
+    const mo = new MutationObserver(run);
+    mo.observe(content, { childList: true });
+    mo.observe(header, { childList: true, characterData: true, subtree: true });
+  }
+  run();
+})();
