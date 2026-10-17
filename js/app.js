@@ -77,13 +77,14 @@ window.addEventListener('noor-quota', function () {
 
 const PAGE_META = {
   tasks:   { title: 'المهام اليومية',   desc: 'مهام اليوم وعاداتك — قائمة بسيطة' },
-  vision:  { title: 'النظرة',           desc: 'من أنا، المنظور، القيم، وأهداف حياتك عبر السنين' },
-  journal: { title: 'التدوين الشامل',   desc: 'مساحاتك الداخلية (أفكارك) والخارجية (ما تتعلمه من العالم)' },
+  vision:  { title: 'النظرة',           desc: 'من أنت وإلى أين تتجه خلال سنوات الخطة' },
+  planner: { title: 'مركز التخطيط',     desc: 'من الهدف إلى المشروع والمهمة والمصدر والخطوة التالية' },
+  journal: { title: 'التدوين الشامل',   desc: 'مساحاتك الداخلية وما تتعلمه من العالم' },
   projects:{ title: 'المشاريع',         desc: 'مشاريعك النشطة — أين يجب أن يذهب تركيزك' },
-  library: { title: 'المكتبة الشخصية',  desc: 'بيئة قراءة ومشاهدة معزولة — كتبك وكورساتك وشروحاتك بلا تشتيت' },
-  timer:   { title: 'المؤقت',           desc: 'بومودورو وتركيز حر — كل دقيقة تُسجَّل تلقائيًا في الإحصائيات' },
-  stats:   { title: 'الإحصائيات',       desc: 'نسبة الاقتراب من الهدف بالسنة — وكل ما يصب هنا' },
-  archive: { title: 'الأرشيف',          desc: 'كل ما أنجزته عبر السنوات — لا شيء يُحذف نهائيًا' }
+  library: { title: 'المكتبة الشخصية',  desc: 'كتبك وملفاتك وكورساتك وفيديوهاتك' },
+  timer:   { title: 'المؤقت',           desc: 'بومودورو وتركيز حر — كل دقيقة تُسجَّل في الإحصائيات' },
+  stats:   { title: 'الإحصائيات',       desc: 'مراجعة التقدم عبر الأيام والأسابيع والسنوات' },
+  archive: { title: 'الأرشيف',          desc: 'ما أنجزته وما تريد الاحتفاظ به' }
 };
 
 const PROJECT_TYPES = [
@@ -296,6 +297,7 @@ async function go(page) {
   try {
   if (page === 'tasks') await renderTasks();
   else if (page === 'vision') await renderVision();
+  else if (page === 'planner') await renderPlanner();
   else if (page === 'journal') await renderJournal();
   else if (page === 'projects') await renderProjects();
   else if (page === 'library') await renderLibrary();
@@ -313,6 +315,7 @@ function refreshCurrentPage() {
   const p = state.page || 'tasks';
   if (p === 'tasks') return renderTasks();
   if (p === 'vision') return renderVision();
+  if (p === 'planner') return renderPlanner();
   if (p === 'journal') return renderJournal();
   if (p === 'projects') return renderProjects();
   if (p === 'library') return renderLibrary();
