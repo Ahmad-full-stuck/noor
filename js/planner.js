@@ -134,7 +134,7 @@
       if(name==='edit-goal'&&typeof w.openGoalModal==='function') return w.openGoalModal(n);
       if(name==='subgoal'&&typeof w.openSubgoalModal==='function') return w.openSubgoalModal(n);
       if(name==='new-subgoal'&&typeof w.openSubgoalModal==='function') return w.openSubgoalModal(n);
-      if(name==='project'&&typeof w.openProjectModal==='function') return w.openProjectModal(null,null,null);
+      if(name==='project'&&typeof w.openProjectModal==='function') return w.openProjectModal(null,n,extra==null?null:Number(extra));
       if(name==='new-project'&&typeof w.openProjectModal==='function') return w.openProjectModal(null,n,extra==null?null:Number(extra));
       if(name==='project-task'&&typeof w.openProjectTaskModal==='function') return w.openProjectTaskModal(n);
       if(name==='task'&&typeof w.openTaskModal==='function') return w.openTaskModal();
