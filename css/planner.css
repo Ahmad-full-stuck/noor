@@ -15,6 +15,7 @@
 .pl-stat-top{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:var(--fs-xs);color:var(--ink-3)}
 .pl-stat-icon{width:30px;height:30px;display:inline-flex;align-items:center;justify-content:center;background:var(--accent-soft);color:var(--accent);font-size:17px}
 .pl-stat-value{display:block;font:700 clamp(20px,2vw,29px) var(--font-title);font-variant-numeric:tabular-nums;margin:8px 0 3px;overflow-wrap:anywhere}
+.pl-stat-note{display:block;font-size:10px;color:var(--ink-4)}
 .pl-stat small{font-size:10px;color:var(--ink-4)}
 .pl-next{display:flex;align-items:flex-start;gap:15px;background:var(--text);color:var(--white);padding:22px;margin-bottom:18px;border:1px solid var(--text)}
 .pl-next-icon{flex:0 0 38px;width:38px;height:38px;display:grid;place-items:center;background:var(--accent);font-size:20px}
