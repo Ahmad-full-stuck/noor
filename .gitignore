@@ -12,3 +12,9 @@ backups/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+
+# بيانات محلية/شخصية — تجاهلها في الإضافات المستقبلية
+noor.db
+noor.db-*
+uploads/
