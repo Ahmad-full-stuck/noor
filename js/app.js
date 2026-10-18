@@ -3602,7 +3602,8 @@ function playMaterialVideo(id) {
     box.innerHTML = `<div class="st-video" id="mt-fs"><iframe src="${esc(src)}" title="YouTube" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen playsinline></iframe></div>
       <div style="margin-top:6px;text-align:end"><button class="btn btn-xs btn-ghost" onclick="fsToggle('mt-fs')">⛶ ملء الشاشة</button></div>`;
   } else if (v.url) {
-    window.open(v.url, '_blank');
+    if (isNoorPrivateFileUrl(v.url)) openNoorPrivateFile(v.url, v.title || 'ملف خاص', false);
+    else window.open(v.url, '_blank');
   }
 }
 
@@ -3790,7 +3791,8 @@ async function matsPlayVideo(mid, vid, directUrl) {
       <div style="margin:6px 0 10px;text-align:end"><button class="btn btn-xs btn-ghost" onclick="fsToggle('mat-fs-${mid}')">⛶ ملء الشاشة</button></div>`;
     box.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   } else if (v && v.url) {
-    window.open(v.url, '_blank');
+    if (isNoorPrivateFileUrl(v.url)) openNoorPrivateFile(v.url, v.title || 'ملف خاص', false);
+    else window.open(v.url, '_blank');
   }
 }
 
