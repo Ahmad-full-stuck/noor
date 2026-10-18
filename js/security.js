@@ -218,21 +218,31 @@
   async function makeSyncEnvelope() {
     var snap = snapshotForSync();
     var encrypted = await encryptPayload(snap);
-    rememberEncrypted(encrypted, revision);
+    rememberEncrypted(encrypted, revision, true);
     return encrypted;
   }
 
-  function rememberEncrypted(envelope, nextRevision) {
+  function rememberEncrypted(envelope, nextRevision, pending) {
     revision = Number.isSafeInteger(Number(nextRevision)) ? Number(nextRevision) : revision;
     var record = {
       format: 'noor-local-cache-v1',
       email: accountEmail,
       revision: revision,
+      pending: !!pending,
       saved_at: new Date().toISOString(),
       payload: envelope
     };
     actualSet(CACHE_KEY, JSON.stringify(record));
     saveVaultMeta();
+  }
+
+  function getEncryptedCacheInfo() {
+    var raw = actualGet(CACHE_KEY);
+    try {
+      var record = JSON.parse(raw || 'null');
+      if (!record || record.format !== 'noor-local-cache-v1' || record.email !== accountEmail) return null;
+      return { revision: Number(record.revision || 0), pending: !!record.pending, saved_at: record.saved_at || null };
+    } catch (_) { return null; }
   }
 
   async function readEncryptedCache() {
@@ -363,6 +373,7 @@
     snapshotForSync: snapshotForSync,
     rememberEncrypted: rememberEncrypted,
     readEncryptedCache: readEncryptedCache,
+    getEncryptedCacheInfo: getEncryptedCacheInfo,
     setVaultMeta: setVaultMeta,
     getVaultMeta: getVaultMeta,
     exportVolatile: exportVolatile,
