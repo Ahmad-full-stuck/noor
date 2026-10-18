@@ -342,6 +342,16 @@
   function isOnline() { return online; }
   function isUnlocked() { return !!dataKey; }
 
+  root.updateNoorCloudStatus = function (text, kind) {
+    var statusText = root.document && root.document.getElementById('statusText');
+    var dot = root.document && root.document.getElementById('statusDot');
+    if (statusText) statusText.textContent = text || '';
+    if (dot) {
+      dot.classList.toggle('connected', kind === 'ok');
+      dot.classList.toggle('warn', kind === 'warn');
+    }
+  };
+
   root.NoorSecurity = {
     installEphemeralStorage: installEphemeralStorage,
     prepareSetup: prepareSetup,
