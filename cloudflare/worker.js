@@ -6,6 +6,19 @@ const PASSWORD_MIN_LENGTH = 14;
 const MAX_JSON_BYTES = 12 * 1024 * 1024;
 const MAX_FILE_BYTES = 20 * 1024 * 1024; // KV values are capped below 25 MiB
 const PBKDF2_ITERATIONS = 310000;
+const EMBEDDED_ASSETS = null;
+const EMBEDDED_MIME = {
+  'index.html': 'text/html; charset=utf-8',
+  'css/style.css': 'text/css; charset=utf-8',
+  'css/planner.css': 'text/css; charset=utf-8',
+  'css/glass.css': 'text/css; charset=utf-8',
+  'js/security.js': 'text/javascript; charset=utf-8',
+  'js/lock.js': 'text/javascript; charset=utf-8',
+  'js/store.js': 'text/javascript; charset=utf-8',
+  'js/app.js': 'text/javascript; charset=utf-8',
+  'js/planner.js': 'text/javascript; charset=utf-8',
+  'js/source-rules.js': 'text/javascript; charset=utf-8'
+};
 
 function securityHeaders(extra) {
   return Object.assign({
@@ -490,8 +503,22 @@ export default {
         const response = await handleApi(request, env);
         if (response) return response;
       }
-      if (!env.ASSETS) return json({ ok: false, error: 'الأصول غير مربوطة' }, 503);
-      const asset = await env.ASSETS.fetch(request);
+      if (request.method !== 'GET' && request.method !== 'HEAD') return fail('طريقة الطلب غير مدعومة', 405);
+      let asset;
+      if (env.ASSETS) {
+        asset = await env.ASSETS.fetch(request);
+      } else if (EMBEDDED_ASSETS) {
+        const key = decodeURIComponent(url.pathname).replace(/^\\/+/, '') || 'index.html';
+        const selected = EMBEDDED_ASSETS[key];
+        if (typeof selected !== 'string') return fail('الملف غير موجود', 404, 'asset_not_found');
+        const body = request.method === 'HEAD' ? null : selected;
+        asset = new Response(body, { status: 200, headers: {
+          'Content-Type': EMBEDDED_MIME[key] || 'application/octet-stream',
+          'Cache-Control': 'no-store'
+        }});
+      } else {
+        return json({ ok: false, error: 'الأصول غير مربوطة' }, 503);
+      }
       return securedAssetResponse(asset);
     } catch (error) {
       console.error('[noor] request failure:', error && error.message || 'unknown');
