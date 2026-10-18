@@ -3,6 +3,7 @@
 
   var META_KEY = 'noor_vault_meta_v1';
   var CACHE_KEY = 'noor_encrypted_cache_v1';
+  var CONFLICT_KEY = 'noor_encrypted_conflict_v1';
   var PBKDF2_ITERATIONS = 310000;
   var dataKey = null;
   var revision = 0;
@@ -11,7 +12,7 @@
   var storageInstalled = false;
   var volatile = new Map();
   var native = {};
-  var persistentKeys = new Set([META_KEY, CACHE_KEY, 'noor.sound', 'noor_hide_sidebar']);
+  var persistentKeys = new Set([META_KEY, CACHE_KEY, CONFLICT_KEY, 'noor.sound', 'noor_hide_sidebar']);
   var internalKeys = new Set(['noor_dirty', 'noor_last_change', 'noor_unlocked']);
   var syncTimer = null;
 
@@ -236,6 +237,12 @@
     saveVaultMeta();
   }
 
+  function backupEncryptedCache() {
+    var raw = actualGet(CACHE_KEY);
+    if (!raw) return false;
+    return actualSet(CONFLICT_KEY, raw);
+  }
+
   function getEncryptedCacheInfo() {
     var raw = actualGet(CACHE_KEY);
     try {
@@ -374,6 +381,7 @@
     rememberEncrypted: rememberEncrypted,
     readEncryptedCache: readEncryptedCache,
     getEncryptedCacheInfo: getEncryptedCacheInfo,
+    backupEncryptedCache: backupEncryptedCache,
     setVaultMeta: setVaultMeta,
     getVaultMeta: getVaultMeta,
     exportVolatile: exportVolatile,
