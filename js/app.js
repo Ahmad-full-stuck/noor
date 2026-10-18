@@ -3226,10 +3226,19 @@ const Bridge = {
   },
 
   queuePush() {
-    if (!this.serverOn || this._applyingRemote || this.conflict) return;
+    if (this._applyingRemote || this.conflict) return;
     clearTimeout(this._t);
-    /* دفع شبه فوري: 250 مللي فقط لتجميع دفعات النقر السريعة */
-    this._t = setTimeout(() => this.pushNow(), 250);
+    /* حفظ محلي مشفّر عند انقطاع الشبكة؛ لا تُكتب بيانات الخزنة كنص صريح في localStorage. */
+    this._t = setTimeout(() => {
+      if (this.serverOn) {
+        this.pushNow();
+      } else if (NoorSecurity && NoorSecurity.isUnlocked && NoorSecurity.isUnlocked()) {
+        NoorSecurity.makeSyncEnvelope().catch((e) => {
+          console.error('[noor] تعذر حفظ النسخة المحلية المشفرة:', e);
+          if (typeof showToast === 'function') showToast('تعذر تحديث النسخة المشفرة المحلية', 'bad');
+        });
+      }
+    }, 250);
   },
 
   flushOnExit() {
