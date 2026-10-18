@@ -6,7 +6,8 @@
   "type": "commonjs",
   "scripts": {
     "start": "node server.js",
-    "test": "node --test tests/*.test.cjs"
+    "test": "node --test tests/*.test.cjs",
+    "build:cloudflare": "node scripts/build-cloudflare.cjs"
   },
   "engines": {
     "node": ">=22.5.0"
