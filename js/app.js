@@ -77,13 +77,14 @@ window.addEventListener('noor-quota', function () {
 
 const PAGE_META = {
   tasks:   { title: 'المهام اليومية',   desc: 'مهام اليوم وعاداتك — قائمة بسيطة' },
-  vision:  { title: 'النظرة',           desc: 'من أنا، المنظور، القيم، وأهداف حياتك عبر السنين' },
-  journal: { title: 'التدوين الشامل',   desc: 'مساحاتك الداخلية (أفكارك) والخارجية (ما تتعلمه من العالم)' },
+  vision:  { title: 'النظرة',           desc: 'من أنت وإلى أين تتجه خلال سنوات الخطة' },
+  planner: { title: 'مركز التخطيط',     desc: 'من الهدف إلى المشروع والمهمة والمصدر والخطوة التالية' },
+  journal: { title: 'التدوين الشامل',   desc: 'مساحاتك الداخلية وما تتعلمه من العالم' },
   projects:{ title: 'المشاريع',         desc: 'مشاريعك النشطة — أين يجب أن يذهب تركيزك' },
-  library: { title: 'المكتبة الشخصية',  desc: 'بيئة قراءة ومشاهدة معزولة — كتبك وكورساتك وشروحاتك بلا تشتيت' },
-  timer:   { title: 'المؤقت',           desc: 'بومودورو وتركيز حر — كل دقيقة تُسجَّل تلقائيًا في الإحصائيات' },
-  stats:   { title: 'الإحصائيات',       desc: 'نسبة الاقتراب من الهدف بالسنة — وكل ما يصب هنا' },
-  archive: { title: 'الأرشيف',          desc: 'كل ما أنجزته عبر السنوات — لا شيء يُحذف نهائيًا' }
+  library: { title: 'المكتبة الشخصية',  desc: 'كتبك وملفاتك وكورساتك وفيديوهاتك' },
+  timer:   { title: 'المؤقت',           desc: 'بومودورو وتركيز حر — كل دقيقة تُسجَّل في الإحصائيات' },
+  stats:   { title: 'الإحصائيات',       desc: 'مراجعة التقدم عبر الأيام والأسابيع والسنوات' },
+  archive: { title: 'الأرشيف',          desc: 'ما أنجزته وما تريد الاحتفاظ به' }
 };
 
 const PROJECT_TYPES = [
@@ -151,9 +152,63 @@ function esc(s) {
    (مثل https://user.github.io/noor/) بدل جذر النطاق. الروابط الخارجية تبقى كما هي. */
 function assetUrl(u) {
   var s = String(u || '');
-  if (!s || /^(?:[a-z][a-z0-9+.-]*:|\/\/|#|data:|blob:)/i.test(s)) return s;
+  if (!s || /^(?:[a-z][a-z0-9+.-]*:|\/\/|#|data:|blob:)/i.test(s) || /^\/api\//i.test(s)) return s;
   return s.replace(/^\/+/, '');
 }
+
+function isNoorPrivateFileUrl(value) {
+  try {
+    var parsed = new URL(String(value || ''), location.href);
+    return parsed.origin === location.origin && /^\/api\/files\/[0-9a-f-]{36}$/i.test(parsed.pathname);
+  } catch (_) { return false; }
+}
+
+/* الملفات الخاصة تصل مشفّرة من الخادم؛ فكّها داخل الجلسة فقط قبل العرض أو التنزيل. */
+async function openNoorPrivateFile(url, filename, shouldDownload) {
+  var popup = shouldDownload ? null : window.open('about:blank', '_blank');
+  try {
+    const response = await fetch(url, { credentials: 'same-origin', cache: 'no-store' });
+    if (!response.ok) throw new Error(response.status === 401 ? 'انتهت الجلسة؛ سجّل الدخول من جديد' : 'تعذر فتح الملف الخاص');
+    const iv = response.headers.get('X-Noor-IV');
+    const mime = response.headers.get('X-Noor-Mime') || 'application/octet-stream';
+    if (!iv || response.headers.get('X-Noor-Encrypted') !== '1') throw new Error('الاستجابة ليست ملفاً مشفّراً صالحاً');
+    const ciphertext = await response.arrayBuffer();
+    const plain = await NoorSecurity.decryptFile(iv, ciphertext);
+    const blob = new Blob([plain], { type: mime });
+    const objectUrl = URL.createObjectURL(blob);
+    const safeName = String(filename || 'noor-private-file').replace(/[\\/:*?"<>|]+/g, '_');
+    const safeInlineType = /^application\/pdf$/i.test(mime) ||
+      /^image\/(?:png|jpeg|gif|webp|avif)$/i.test(mime) ||
+      /^text\/(?:plain|markdown|csv)$/i.test(mime);
+    if (shouldDownload || !safeInlineType) {
+      if (popup && !popup.closed) popup.close();
+      const a = document.createElement('a');
+      a.href = objectUrl; a.download = safeName; a.rel = 'noopener';
+      document.body.appendChild(a); a.click(); a.remove();
+    } else if (popup && !popup.closed) {
+      popup.opener = null;
+      popup.location.href = objectUrl;
+    } else {
+      const a = document.createElement('a');
+      a.href = objectUrl; a.target = '_blank'; a.rel = 'noopener';
+      document.body.appendChild(a); a.click(); a.remove();
+    }
+    setTimeout(function () { URL.revokeObjectURL(objectUrl); }, 120000);
+  } catch (error) {
+    if (popup && !popup.closed) popup.close();
+    if (typeof showToast === 'function') showToast(error.message || 'تعذر فتح الملف الخاص', 'bad');
+  }
+}
+
+document.addEventListener('click', function (event) {
+  var link = event.target && event.target.closest ? event.target.closest('a[href]') : null;
+  if (!link) return;
+  var href = link.getAttribute('href') || '';
+  if (!isNoorPrivateFileUrl(href)) return;
+  event.preventDefault();
+  openNoorPrivateFile(href, link.getAttribute('download') || link.dataset.fileName || '', link.hasAttribute('download'));
+}, true);
+
 
 function fileToBase64(file, maxW, maxH, cb) {
   if (!file || !file.type.startsWith('image/')) return cb(null);
@@ -296,6 +351,7 @@ async function go(page) {
   try {
   if (page === 'tasks') await renderTasks();
   else if (page === 'vision') await renderVision();
+  else if (page === 'planner') await renderPlanner();
   else if (page === 'journal') await renderJournal();
   else if (page === 'projects') await renderProjects();
   else if (page === 'library') await renderLibrary();
@@ -313,6 +369,7 @@ function refreshCurrentPage() {
   const p = state.page || 'tasks';
   if (p === 'tasks') return renderTasks();
   if (p === 'vision') return renderVision();
+  if (p === 'planner') return renderPlanner();
   if (p === 'journal') return renderJournal();
   if (p === 'projects') return renderProjects();
   if (p === 'library') return renderLibrary();
@@ -2939,6 +2996,70 @@ function _sendLocal(method, path, body) {
   return null;
 }
 
+
+function openNoorConflictDialog(localRevision, serverRevision) {
+  const dialog = document.getElementById('noor-conflict-dialog');
+  const detail = document.getElementById('noor-conflict-detail');
+  if (detail) detail.textContent =
+    'نسخة هذا الجهاز رقم ' + localRevision + '، ونسخة الخادم رقم ' + serverRevision +
+    '. لم نستبدل أياً منهما. اختر بوضوح أي نسخة تريد اعتمادها.';
+  if (dialog && typeof dialog.showModal === 'function' && !dialog.open) dialog.showModal();
+}
+
+async function resolveNoorConflict(choice) {
+  const dialog = document.getElementById('noor-conflict-dialog');
+  try {
+    if (choice === 'local') {
+      if (!confirm('سيُعتمد تعديل هذا الجهاز فوق النسخة السحابية الأحدث. النسخة السحابية السابقة ستبقى غير معتمدة. هل تتابع؟')) return;
+      NoorSecurity.setRevision(Number(Bridge.conflictServerRevision || 0));
+      Bridge.conflict = false;
+      Bridge.pendingPush = false;
+      Bridge.markDirty();
+      if (dialog && dialog.open) dialog.close();
+      await Bridge.pushNow();
+      return;
+    }
+    if (choice === 'server') {
+      const response = await fetch('/api/sync', { cache: 'no-store', credentials: 'same-origin' });
+      if (!response.ok) throw new Error('تعذر تحميل نسخة الخادم');
+      const encrypted = await response.json();
+      const snapshot = await NoorSecurity.decryptPayload(encrypted);
+      if (!snapshot || snapshot.format !== 'noor-secure-v1' || !snapshot.data || snapshot.data.app !== 'noor') {
+        throw new Error('النسخة السحابية ليست بصيغة معروفة');
+      }
+      const revision = Number(response.headers.get('X-Noor-Revision') || Bridge.conflictServerRevision || 0);
+      Bridge._applyingRemote = true;
+      try {
+        NoorStore.restore(snapshot.data);
+        NoorSecurity.restoreVolatile(snapshot.client_state || {});
+        NoorSecurity.setRevision(revision);
+        NoorSecurity.rememberEncrypted(encrypted, revision, false);
+        Bridge.clearDirty();
+        Bridge.conflict = false;
+        Bridge.pendingPush = false;
+        NoorSecurity.purgeLegacyPlaintext();
+      } finally { Bridge._applyingRemote = false; }
+      if (dialog && dialog.open) dialog.close();
+      try { if (typeof Bridge.afterPull === 'function') Bridge.afterPull(); } catch (_) {}
+      updateNoorCloudStatus('تم اعتماد نسخة الخادم؛ نسخة الجهاز الأخرى بقيت محفوظة مشفّرة', 'ok');
+      if (typeof showToast === 'function') showToast('اعتمدنا نسخة الخادم. توجد نسخة مشفّرة احتياطية محلية إذا احتجت مراجعتها.', 'ok');
+      return;
+    }
+    if (choice === 'export') {
+      const raw = localStorage.getItem('noor_encrypted_conflict_v1');
+      if (!raw) throw new Error('لا توجد نسخة تعارض مشفّرة للتنزيل');
+      const blob = new Blob([raw], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = 'noor-encrypted-conflict-backup.json';
+      a.click(); URL.revokeObjectURL(url);
+      return;
+    }
+  } catch (error) {
+    if (typeof showToast === 'function') showToast(error.message || 'تعذّر حل تعارض المزامنة', 'bad');
+  }
+}
+
 /* ===== جسر الخلود: قاعدة البيانات على القرص هي المخزن الرئيسي =====
    كل حفظ محلي يُدفع فوراً كلقطة كاملة للخادم، مع إعادة محاولة كل 3 ثوانٍ حتى يصل الحفظ،
    ولقطة أخيرة إلزامية عند إغلاق الصفحة، وعند الإقلاع يُستعاد الأحدث بين المتصفح والقرص. */
@@ -2961,36 +3082,87 @@ const Bridge = {
     } catch (e) { this.serverOn = false; }
   },
 
-  /* عند الإقلاع: الأحدث يفوز — نقارن آخر تغيير محلي بآخر لقطة محفوظة على القرص */
+  /* في وضع السحابة، الخادم هو مصدر الحقيقة. لا نقبل إلا لقطة مشفرة ولا نكتب فوق مراجعة أحدث بصمت. */
   _reconciling: false,
+  _applyingRemote: false,
+  conflict: false,
+  conflictServerRevision: 0,
   async reconcile() {
     if (!this.serverOn || this._reconciling) return;
     this._reconciling = true;
     try {
-      let info = null;
-      try { info = await (await fetch('/api/sync/info', { cache: 'no-store' })).json(); } catch (e) { console.error('[noor] فشل قراءة حالة المزامنة:', e); this.scheduleRetry(); return; }
-      if (!info || !info.exists) { this.markDirty(); this.pushNow(); return; }
-      const localTs = Number(localStorage.getItem('noor_last_change') || 0);
-      const serverTs = Date.parse(info.saved_at || '') || 0;
-      /* صفر مخاطرة: أي تغيير محلي لم يصل القاعدة بعد يفوز دائمًا — لا نسحب لقطة فوقه */
-      const dirty = localStorage.getItem('noor_dirty') === '1';
-      /* لا نستبدل بيانات المستخدم المحلية بلقطة الخادم إلا إن كانت محليًا فارغة تمامًا (أول تشغيل) */
-      const localEmpty = NoorStore.isEmpty && NoorStore.isEmpty();
-      if (!dirty && localEmpty && serverTs > 0) {
-        try {
-          const r = await fetch('/api/sync', { cache: 'no-store' });
-          if (r.ok) {
-            const snap = await r.json();
-            NoorStore.restore(snap);
-            localStorage.setItem('noor_last_change', String(Date.parse(snap.exported_at) || serverTs));
-            this.clearDirty();
-            /* جُلبت لقطة أحدث من القرص: أعد رسم الصفحة الحالية لتعرضها فوراً */
-            try { if (typeof this.afterPull === 'function') this.afterPull(); } catch (e) {}
-          }
-        } catch (e) { console.error('[noor] تفشل سحب اللقطة من الخادم:', e); }
-      } else {
-        this.pushNow();
+      let infoResponse = await fetch('/api/sync/info', { cache: 'no-store', credentials: 'same-origin' });
+      if (!infoResponse.ok) {
+        if (infoResponse.status === 401) { this.serverOn = false; if (typeof showToast === 'function') showToast('انتهت الجلسة. أعد تسجيل الدخول.', 'bad'); }
+        else this.scheduleRetry();
+        return;
       }
+      const info = await infoResponse.json();
+      if (!info || !info.exists) {
+        /* عند إنشاء الحساب الأول، قد تكون بيانات المتصفح القديمة موجودة في الذاكرة المؤقتة فقط. */
+        NoorSecurity.setRevision(Number(info && info.revision || 0));
+        this.markDirty();
+        await this.pushNow();
+        return;
+      }
+
+      const r = await fetch('/api/sync', { cache: 'no-store', credentials: 'same-origin' });
+      if (!r.ok) throw new Error('تعذر جلب النسخة المشفرة من الخادم');
+      const envelope = await r.json();
+      const snap = await NoorSecurity.decryptPayload(envelope);
+      if (!snap || snap.format !== 'noor-secure-v1' || !snap.data || snap.data.app !== 'noor') {
+        throw new Error('صيغة النسخة المشفرة غير معروفة');
+      }
+
+      const serverRevision = Number(r.headers.get('X-Noor-Revision') || info.revision || 0);
+      const cacheInfo = NoorSecurity.getEncryptedCacheInfo();
+      if (cacheInfo && cacheInfo.pending) {
+        const cached = await NoorSecurity.readEncryptedCache();
+        if (cached && cached.format === 'noor-secure-v1' && cached.data && cached.data.app === 'noor') {
+          NoorSecurity.backupEncryptedCache();
+          this._applyingRemote = true;
+          try {
+            NoorStore.restore(cached.data);
+            NoorSecurity.restoreVolatile(cached.client_state || {});
+            if (cacheInfo.revision !== serverRevision) {
+              this.conflict = true;
+              this.conflictServerRevision = serverRevision;
+              updateNoorCloudStatus('تعارض مزامنة — النسختان محفوظتان', 'warn');
+              if (typeof openNoorConflictDialog === 'function') openNoorConflictDialog(cacheInfo.revision, serverRevision);
+              return;
+            }
+            NoorSecurity.setRevision(serverRevision);
+            this.conflict = false;
+            this.clearDirty();
+          } finally {
+            this._applyingRemote = false;
+          }
+          /* نسخة محلية مشفّرة لم تصل للخادم، لكن رقم المراجعة لا يزال مطابقاً. */
+          this.markDirty();
+          await this.pushNow();
+          try { if (typeof this.afterPull === 'function') this.afterPull(); } catch (e) {}
+          return;
+        }
+      }
+
+      this._applyingRemote = true;
+      try {
+        NoorStore.restore(snap.data);
+        NoorSecurity.restoreVolatile(snap.client_state || {});
+        NoorSecurity.setRevision(serverRevision);
+        NoorSecurity.rememberEncrypted(envelope, serverRevision, false);
+        this.clearDirty();
+        this.conflict = false;
+        window.NOOR_LEGACY_IMPORT = false;
+        NoorSecurity.purgeLegacyPlaintext();
+      } finally {
+        this._applyingRemote = false;
+      }
+      try { if (typeof this.afterPull === 'function') this.afterPull(); } catch (e) {}
+    } catch (e) {
+      console.error('[noor] فشلت المزامنة الآمنة:', e);
+      if (typeof showToast === 'function') showToast('تعذرت المزامنة الآمنة. بقيت البيانات في الذاكرة/النسخة المشفرة.', 'bad');
+      this.scheduleRetry();
     } finally {
       this._reconciling = false;
     }
@@ -3000,30 +3172,54 @@ const Bridge = {
   markDirty() { try { localStorage.setItem('noor_dirty', '1'); } catch (e) {} },
   clearDirty() { try { localStorage.removeItem('noor_dirty'); } catch (e) {} },
 
-  pushNow() {
-    if (!this.serverOn) return;
+  async pushNow() {
+    if (!this.serverOn || this._applyingRemote || !NoorSecurity.isUnlocked()) return;
     if (this.pushing) { this.pendingPush = true; return; }
     this.pushing = true;
     this.markDirty();
     try {
-      fetch('/api/sync', {
+      const expectedRevision = NoorSecurity.getRevision();
+      const encrypted = await NoorSecurity.makeSyncEnvelope();
+      const r = await fetch('/api/sync', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Noor-Sync': '1' },
-        body: JSON.stringify(NoorStore.dump())
-      }).then((r) => {
-        this.pushing = false;
-        if (r && r.ok) {
-          /* وصلت اللقطة للقاعدة: نستعمل ساعة العميل حصرياً في كل الطوابع،
-             لأن المقارنة عند الإقلاع تجري بين هذا الطابع وطوابع الحفظ المحلية (ساعة العميل أيضاً)
-             — خلط ساعة الخادم يفتح نافذة تراجع لو كانت ساعته متقدمة */
-          try { localStorage.setItem('noor_last_change', String(Date.now())); } catch (e) {}
-          this.clearDirty();
-        } else {
-          this.scheduleRetry();
-        }
-        if (this.pendingPush) { this.pendingPush = false; this.queuePush(); }
-      }).catch(() => { this.pushing = false; this.scheduleRetry(); });
-    } catch (e) { this.pushing = false; this.scheduleRetry(); }
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json', 'If-Match': String(expectedRevision) },
+        body: JSON.stringify(encrypted)
+      });
+      const result = await r.json().catch(() => ({}));
+      if (r.ok && result.ok) {
+        NoorSecurity.setRevision(Number(result.revision));
+        NoorSecurity.rememberEncrypted(encrypted, Number(result.revision), false);
+        this.clearDirty();
+        this.conflict = false;
+        NoorSecurity.purgeLegacyPlaintext();
+        updateNoorCloudStatus('مزامنة مشفّرة ومكتملة', 'ok');
+      } else if (r.status === 409 || result.code === 'revision_conflict') {
+        this.conflict = true;
+        this._retryT && clearTimeout(this._retryT);
+        this._retryT = null;
+        /* لا نعيد الإرسال تلقائياً: يحفظ المتصفح نسخة مشفّرة لتفادي فقد تعديلات هذا الجهاز. */
+        NoorSecurity.rememberEncrypted(encrypted, expectedRevision, true);
+        updateNoorCloudStatus('تعارض مزامنة — لم تُستبدل البيانات', 'warn');
+        if (typeof showToast === 'function') showToast('توجد تغييرات من جهاز آخر. لم نكتب فوقها؛ احتفظنا بنسخة مشفّرة من تعديلك.', 'bad');
+      } else if (r.status === 401) {
+        this.serverOn = false;
+        NoorSecurity.setOnline(false);
+        updateNoorCloudStatus('انتهت الجلسة — سجّل الدخول مجدداً', 'warn');
+      } else {
+        this.scheduleRetry();
+      }
+    } catch (e) {
+      NoorSecurity.setOnline(false);
+      updateNoorCloudStatus('تعذّر الاتصال — النسخة المحلية مشفّرة', 'warn');
+      this.scheduleRetry();
+    } finally {
+      this.pushing = false;
+      if (this.pendingPush && !this.conflict) {
+        this.pendingPush = false;
+        this.queuePush();
+      }
+    }
   },
 
   scheduleRetry() {
@@ -3033,24 +3229,43 @@ const Bridge = {
   },
 
   queuePush() {
-    if (!this.serverOn) return;
+    if (this._applyingRemote || this.conflict) return;
     clearTimeout(this._t);
-    /* دفع شبه فوري: 250 مللي فقط لتجميع دفعات النقر السريعة */
-    this._t = setTimeout(() => this.pushNow(), 250);
+    /* حفظ محلي مشفّر عند انقطاع الشبكة؛ لا تُكتب بيانات الخزنة كنص صريح في localStorage. */
+    this._t = setTimeout(() => {
+      if (this.serverOn) {
+        this.pushNow();
+      } else if (NoorSecurity && NoorSecurity.isUnlocked && NoorSecurity.isUnlocked()) {
+        NoorSecurity.makeSyncEnvelope().catch((e) => {
+          console.error('[noor] تعذر حفظ النسخة المحلية المشفرة:', e);
+          if (typeof showToast === 'function') showToast('تعذر تحديث النسخة المشفرة المحلية', 'bad');
+        });
+      }
+    }, 250);
   },
 
   flushOnExit() {
-    /* إغلاق التبويب أو التنقل: لقطة أخيرة عبر sendBeacon لا تعيق الخروج.
-       المتصفحات تحدّد ~64KB للـbeacon — عند الفشل نجرب fetch keepalive كخطة بديلة */
-    try {
-      if (!this.serverOn) return;
-      const payload = JSON.stringify(NoorStore.dump());
-      let ok = false;
-      if (navigator.sendBeacon) {
-        try { ok = navigator.sendBeacon('/api/sync', new Blob([payload], { type: 'application/json' })); } catch (e) { ok = false; }
-      }
-      if (!ok) fetch('/api/sync', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Noor-Sync': '1' }, body: payload, keepalive: true }).catch(() => {});
-    } catch (e) {}
+    /* لقطة أخيرة مشفّرة فقط؛ لا يستخدم sendBeacon لأنه لا يضمن ترويسة رقم المراجعة. */
+    if (!this.serverOn || !NoorSecurity.isUnlocked() || this.conflict) return;
+    const bridge = this;
+    Promise.resolve().then(async function () {
+      try {
+        const expectedRevision = NoorSecurity.getRevision();
+        const encrypted = await NoorSecurity.makeSyncEnvelope();
+        const r = await fetch('/api/sync', {
+          method: 'POST', credentials: 'same-origin', keepalive: true,
+          headers: { 'Content-Type': 'application/json', 'If-Match': String(expectedRevision) },
+          body: JSON.stringify(encrypted)
+        });
+        const result = await r.json().catch(() => ({}));
+        if (r.ok && result.ok) {
+          NoorSecurity.setRevision(Number(result.revision));
+          NoorSecurity.rememberEncrypted(encrypted, Number(result.revision), false);
+          bridge.clearDirty();
+          NoorSecurity.purgeLegacyPlaintext();
+        }
+      } catch (_) {}
+    });
   },
 
   install() {
@@ -3059,34 +3274,51 @@ const Bridge = {
       window.addEventListener('pagehide', () => this.flushOnExit());
       /* العودة للتبويب أو رجوع الشبكة: نكتشف الخادم وندفع أي تغييرات غير مسلّمة فقط —
          لا reconcile كامل هنا كي لا تُمس بيانات عدّلت للتو أثناء غياب التبويب */
-      const rewire = () => { this.detect().then(() => { if (this.serverOn) { try { if (localStorage.getItem('noor_dirty') === '1') this.pushNow(); } catch (e) {} } }); };
+      const rewire = () => {
+        this.detect().then(() => {
+          if (this.serverOn) {
+            NoorSecurity.setOnline(true);
+            if (this.conflict) return;
+            try { if (localStorage.getItem('noor_dirty') === '1') this.pushNow(); } catch (e) {}
+          }
+        });
+      };
       window.addEventListener('online', rewire);
       document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') rewire(); });
     } catch (e) {}
   }
 };
 
-/* رفع ملفات كبيرة عبر الخادم (بث مباشر إلى القرص)، أو base64 في الوضع المحلي */
+/* الملفات الخاصة تُشفّر محلياً قبل أن تغادر الجهاز. */
 async function uploadBigFile(file, onProgress) {
   if (!(file instanceof File)) throw new Error('ملف غير صالح');
-  if (Bridge.serverOn) {
-    const safeName = file.name.replace(/[\\/:*?"<>|]+/g, '_');
+  if (Bridge.serverOn && window.NOOR_CLOUD_MODE) {
+    const encrypted = await NoorSecurity.encryptFile(file);
     const xhr = new XMLHttpRequest();
-    const url = '/api/upload/' + encodeURIComponent(Date.now() + '-' + safeName);
+    const url = '/api/upload/private';
     const result = await new Promise((resolve, reject) => {
       xhr.open('PUT', url, true);
+      xhr.withCredentials = true;
       xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+      xhr.setRequestHeader('X-Noor-IV', encrypted.iv);
+      xhr.setRequestHeader('X-Noor-Mime', file.type || 'application/octet-stream');
       if (xhr.upload && onProgress) xhr.upload.onprogress = (ev) => { if (ev.lengthComputable) onProgress(ev.loaded / ev.total); };
       xhr.onload = () => {
-        try { const j = JSON.parse(xhr.responseText); if (xhr.status >= 200 && xhr.status < 300 && j.ok) resolve(j); else reject(new Error(j.error || 'فشل الرفع')); }
-        catch (e) { reject(new Error('فشل الرفع')); }
+        try {
+          const j = JSON.parse(xhr.responseText);
+          if (xhr.status >= 200 && xhr.status < 300 && j.ok) resolve(j);
+          else reject(new Error(j.error || 'فشل رفع الملف المشفّر'));
+        } catch (e) { reject(new Error('فشل الرفع')); }
       };
       xhr.onerror = () => reject(new Error('تعذر الاتصال بالخادم'));
-      xhr.send(file);
+      xhr.send(encrypted.ciphertext.buffer);
     });
-    return result;
+    return Object.assign({}, result, { name: file.name, noor_private: true });
   }
-  if (file.size > 8 * 1024 * 1024) throw new Error('في الوضع المحلي الحد 8MB — شغّل الخادم لرفع الملفات الضخمة');
+  if (window.NOOR_CLOUD_MODE && file.size > 4 * 1024 * 1024) {
+    throw new Error('لرفع ملف كبير بأمان، أعد الاتصال بالخادم. حد الرفع دون اتصال 4MB.');
+  }
+  if (file.size > 8 * 1024 * 1024) throw new Error('في الوضع المحلي الحد 8MB');
   const dataUrl = await new Promise((resolve, reject) => {
     const fr = new FileReader();
     fr.onload = () => resolve(fr.result);
@@ -3382,7 +3614,8 @@ function playMaterialVideo(id) {
     box.innerHTML = `<div class="st-video" id="mt-fs"><iframe src="${esc(src)}" title="YouTube" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen playsinline></iframe></div>
       <div style="margin-top:6px;text-align:end"><button class="btn btn-xs btn-ghost" onclick="fsToggle('mt-fs')">⛶ ملء الشاشة</button></div>`;
   } else if (v.url) {
-    window.open(v.url, '_blank');
+    if (isNoorPrivateFileUrl(v.url)) openNoorPrivateFile(v.url, v.title || 'ملف خاص', false);
+    else window.open(v.url, '_blank');
   }
 }
 
@@ -3570,7 +3803,8 @@ async function matsPlayVideo(mid, vid, directUrl) {
       <div style="margin:6px 0 10px;text-align:end"><button class="btn btn-xs btn-ghost" onclick="fsToggle('mat-fs-${mid}')">⛶ ملء الشاشة</button></div>`;
     box.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   } else if (v && v.url) {
-    window.open(v.url, '_blank');
+    if (isNoorPrivateFileUrl(v.url)) openNoorPrivateFile(v.url, v.title || 'ملف خاص', false);
+    else window.open(v.url, '_blank');
   }
 }
 
@@ -6026,28 +6260,73 @@ function stopFreeze() {
   openSettings(); renderTasks();
 }
 
-function downloadBackup() {
-  const obj = NoorStore.dump();
+async function sealNoorBackup(value) {
+  if (!window.NOOR_CLOUD_MODE) return value;
+  if (!window.NoorSecurity || !NoorSecurity.isUnlocked()) {
+    throw new Error('افتح الخزنة أولاً قبل إنشاء نسخة احتياطية مشفّرة');
+  }
+  return NoorSecurity.encryptPayload({ format: 'noor-backup-v1', payload: value });
+}
+
+async function unsealNoorBackup(value) {
+  if (value && value.encrypted === true && Number(value.v) === 1) {
+    if (!window.NOOR_CLOUD_MODE || !window.NoorSecurity || !NoorSecurity.isUnlocked()) {
+      throw new Error('هذه نسخة مشفّرة. افتح حساب نُور نفسه لفكها');
+    }
+    const decoded = await NoorSecurity.decryptPayload(value);
+    if (!decoded || decoded.format !== 'noor-backup-v1' || !decoded.payload) {
+      throw new Error('صيغة النسخة الاحتياطية المشفّرة غير صالحة');
+    }
+    return decoded.payload;
+  }
+  if (window.NOOR_CLOUD_MODE) {
+    throw new Error('رفض نُور النسخة غير المشفّرة. في الوضع الآمن لا تُقبل ملفات النسخ النصية');
+  }
+  return value;
+}
+
+function downloadNoorJson(obj, filename) {
   const blob = new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = 'noor-backup-' + todayISO() + '.json';
+  a.href = url;
+  a.download = filename;
   document.body.appendChild(a);
   a.click();
-  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 100);
+  setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 150);
+}
+
+async function downloadBackup() {
+  try {
+    const sealed = await sealNoorBackup(NoorStore.dump());
+    downloadNoorJson(sealed, 'noor-backup-' + todayISO() + '.json');
+    showToast(window.NOOR_CLOUD_MODE ? 'تم إنشاء نسخة احتياطية مشفّرة' : 'تم تحميل النسخة الاحتياطية');
+  } catch (err) {
+    showToast('تعذر إنشاء النسخة الاحتياطية: ' + err.message, 'bad');
+  }
 }
 
 async function doRestore(e) {
-  const f = e.target.files[0];
-  if (!f) return;
-  if (!confirm('الاستعادة ستحذف كل البيانات الحالية وتستبدلها بمحتويات الملف. متابعة؟')) return;
+  const file = e.target.files[0];
+  if (!file) return;
+  e.target.value = '';
+  if (!confirm('الاستعادة ستستبدل بيانات الخزنة الحالية. تابع فقط إذا كانت النسخة موثوقة ولديك نسخة احتياطية حالية.')) return;
   try {
-    const obj = JSON.parse(await f.text());
-    NoorStore.restore(obj);
-    showToast('تمت الاستعادة بنجاح');
+    const parsed = JSON.parse(await file.text());
+    const restored = await unsealNoorBackup(parsed);
+    const data = restored && restored.data && !restored.app ? restored.data : restored;
+    if (!data || data.app !== 'noor' || !data.data || !data.data.settings) {
+      throw new Error('صيغة النسخة الاحتياطية غير صالحة');
+    }
+    NoorStore.restore(data);
+    Bridge.markDirty();
+    Bridge.queuePush();
+    showToast('تمت الاستعادة؛ جارٍ حفظها مشفّرة');
     closeModal();
     await go('tasks');
-  } catch (err) { showToast('فشلت الاستعادة: ' + err.message, 'bad'); }
+  } catch (err) {
+    showToast('فشلت الاستعادة: ' + err.message, 'bad');
+  }
 }
 
 async function doReset() {
@@ -6081,75 +6360,71 @@ async function factoryReset() {
     return showToast('يجب تأكيد كل الخيارات أولاً', 'bad');
   }
   play('click');
-  /* 1) أخذ نسخة احتياطية كاملة */
-  const fullBackup = NoorStore.dump();
-  const backupData = JSON.stringify(fullBackup, null, 2);
-  const backupObj = {
-    version: '2.0',
-    timestamp: new Date().toISOString(),
-    appVersion: 'noor-' + (document.querySelector('script[src*="app.js"]')?.src?.match(/v=(\d+)/)?.[1] || 'unknown'),
-    data: fullBackup
-  };
-  const backupStr = JSON.stringify(backupObj, null, 2);
-  /* 2) تحميل الملف تلقائياً */
-  if (download.checked) {
-    const blob = new Blob([backupStr], { type: 'application/json' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = 'noor-factory-reset-backup-' + todayISO() + '.json';
-    document.body.appendChild(a);
-    a.click();
-    setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 100);
-  }
-  /* 3) حفظ في localStorage كنسخة "factory-reset-last" للاستعادة السريعة */
-  try { localStorage.setItem('noor_factory_reset_backup', backupStr); } catch (e) {}
-  /* 4) تنفيذ الحذف الكامل */
   try {
+    const fullBackup = NoorStore.dump();
+    const backupObj = {
+      version: '2.0',
+      timestamp: new Date().toISOString(),
+      appVersion: 'noor-secure',
+      data: fullBackup
+    };
+    const sealed = await sealNoorBackup(backupObj);
+    const backupStr = JSON.stringify(sealed, null, 2);
+    if (download.checked) {
+      downloadNoorJson(sealed, 'noor-factory-reset-backup-' + todayISO() + '.json');
+    }
+    /* في وضع السحابة يحفظ المخزن المحلي هذه النسخة داخل الذاكرة المؤقتة فقط؛ المحتوى نفسه مشفّر. */
+    try { localStorage.setItem('noor_factory_reset_backup', backupStr); } catch (_) {}
     NoorStore.factoryReset();
-    showToast('✅ تمت إعادة ضبط المصنع — النظام فارغ الآن');
+    Bridge.markDirty();
+    Bridge.queuePush();
+    showToast('تمت إعادة ضبط المصنع — نُزّلت النسخة الاحتياطية المشفّرة قبل المسح');
     play('success');
+    closeModal();
+    setTimeout(() => { go('tasks'); }, 300);
   } catch (e) {
-    showToast('خطأ أثناء الحذف: ' + e.message, 'bad');
-    return;
+    showToast('تعذر إنشاء النسخة قبل المسح: ' + e.message, 'bad');
   }
-  closeModal();
-  setTimeout(() => { go('tasks'); }, 300);
 }
 
 /* استعادة من نسخة إعادة ضبط المصنع */
 async function restoreFactoryResetBackup() {
   const raw = localStorage.getItem('noor_factory_reset_backup');
   if (!raw) return showToast('لا توجد نسخة احتياطية من إعادة ضبط المصنع', 'bad');
-  if (!confirm('الاستعادة ستحذف كل البيانات الحالية وتستبدلها بنسخة "إعادة ضبط المصنع" الأخيرة. متابعة؟')) return;
+  if (!confirm('الاستعادة ستحذف البيانات الحالية وتستبدلها بالنسخة الأخيرة. متابعة؟')) return;
   try {
-    const obj = JSON.parse(raw);
-    if (obj.data) {
-      NoorStore.restore(obj.data);
-      showToast('✅ تمت استعادة نسخة إعادة ضبط المصنع');
-      closeModal();
-      await go('tasks');
-    } else {
-      showToast('صيغة النسخة الاحتياطية غير صالحة', 'bad');
+    const parsed = JSON.parse(raw);
+    const obj = await unsealNoorBackup(parsed);
+    const data = obj && obj.data && !obj.app ? obj.data : obj;
+    if (!data || data.app !== 'noor' || !data.data || !data.data.settings) {
+      throw new Error('صيغة النسخة الاحتياطية غير صالحة');
     }
-  } catch (e) { showToast('فشلت الاستعادة: ' + e.message, 'bad'); }
+    NoorStore.restore(data);
+    Bridge.markDirty();
+    Bridge.queuePush();
+    showToast('تمت الاستعادة؛ جارٍ حفظها مشفّرة');
+    closeModal();
+    await go('tasks');
+  } catch (e) {
+    showToast('فشلت الاستعادة: ' + e.message, 'bad');
+  }
 }
 
 async function doArchiveAll() {
   if (!confirm('⚠ سيتم أرشفة كل البيانات وتحميل نسخة احتياطية. لن يُحذف شيء — يمكنك استعادته من الأرشيف.')) return;
   if (!confirm('تأكيد أخير: أرشفة شاملة + تحميل نسخة احتياطية؟')) return;
   try {
-    const backup = NoorStore.dump();
-    const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url; a.download = 'noor-backup-' + todayISO() + '.json';
-    document.body.appendChild(a); a.click(); document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    const backup = await sealNoorBackup(NoorStore.dump());
+    downloadNoorJson(backup, 'noor-backup-' + todayISO() + '.json');
     NoorStore.archiveAll();
-    showToast('تمت الأرشفة الشاملة — تحمّلت نسخة احتياطية');
+    Bridge.markDirty();
+    Bridge.queuePush();
+    showToast(window.NOOR_CLOUD_MODE ? 'تمت الأرشفة وحمّلت نسخة مشفّرة' : 'تمت الأرشفة الشاملة — تحمّلت نسخة احتياطية');
     closeModal();
     await go('tasks');
-  } catch (err) { showToast(err.message, 'bad'); }
+  } catch (err) {
+    showToast(err.message, 'bad');
+  }
 }
 
 async function loadBackupStatus() {

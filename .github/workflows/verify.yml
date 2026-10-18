@@ -1,0 +1,43 @@
+name: Verify Noor changes
+
+on:
+  push:
+    branches:
+      - feat/integrated-planning-hub
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Run source-rule tests
+        run: npm test
+      - name: Build Cloudflare allowlist
+        run: npm run build:cloudflare
+      - name: Verify private assets are not in the public build
+        shell: bash
+        run: |
+          test -f dist/index.html
+          test -f dist/_worker.js
+          test ! -e dist/noor.db
+          test ! -e dist/data
+          test ! -e dist/uploads
+          test ! -e dist/backups
+      - name: Check JavaScript syntax
+        shell: bash
+        run: |
+          for file in js/source-rules.js js/security.js js/lock.js js/planner.js js/app.js scripts/build-cloudflare.cjs; do
+            node --check "$file"
+          done
+          node --input-type=module --check < cloudflare/worker.js
