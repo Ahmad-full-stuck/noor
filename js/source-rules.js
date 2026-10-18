@@ -96,7 +96,7 @@
     var normalizedUrl = normalizeUrl(rawUrl);
     var mime = String(source.mimeType || source.mime || '').split(';')[0].trim().toLowerCase();
     var name = String(source.fileName || source.name || source.title || '').trim();
-    var ext = extensionOf(source.fileName || source.name || rawUrl);
+    var ext = extensionOf(source.fileName || (source.url || source.href ? rawUrl : source.name));
     var parsed = null;
     try { if (normalizedUrl) parsed = new URL(normalizedUrl); } catch (_) {}
     var host = parsed ? parsed.hostname : '';
