@@ -421,13 +421,8 @@ async function uploadFile(request, env, user) {
   if (size > MAX_FILE_BYTES + 32) return fail('الحد الحالي للملف المشفر 20 ميغابايت؛ فعّل تخزين R2 للملفات الأكبر', 413, 'file_too_large');
   const iv = request.headers.get('X-Noor-IV') || '';
   const requestedMime = (request.headers.get('X-Noor-Mime') || 'application/octet-stream').trim().toLowerCase().slice(0, 120);
-  const mime = /^[a-z0-9!#  const iv = request.headers.get('X-Noor-IV') || '';
-  const mime = (request.headers.get('X-Noor-Mime') || 'application/octet-stream').slice(0, 120);
-  if (!/^[a-zA-Z0-9_-]{16,32}$/.test(iv)) return fail('بيانات تشفير الملف غير صالحة', 400);^_.+-]+\/[a-z0-9!#  const iv = request.headers.get('X-Noor-IV') || '';
-  const mime = (request.headers.get('X-Noor-Mime') || 'application/octet-stream').slice(0, 120);
-  if (!/^[a-zA-Z0-9_-]{16,32}$/.test(iv)) return fail('بيانات تشفير الملف غير صالحة', 400);^_.+-]+$/.test(requestedMime)
-    ? requestedMime
-    : 'application/octet-stream';
+  const mimePattern = new RegExp('^[a-z0-9!#$&^_.+-]+/[a-z0-9!#$&^_.+-]+$');
+  const mime = mimePattern.test(requestedMime) ? requestedMime : 'application/octet-stream';
   if (!/^[a-zA-Z0-9_-]{16,32}$/.test(iv)) return fail('بيانات تشفير الملف غير صالحة', 400);
   const bytes = await request.arrayBuffer();
   if (bytes.byteLength > MAX_FILE_BYTES + 32) return fail('الحد الحالي للملف المشفر 20 ميغابايت؛ فعّل تخزين R2 للملفات الأكبر', 413, 'file_too_large');
