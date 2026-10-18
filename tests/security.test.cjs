@@ -80,10 +80,10 @@ test('authenticated encryption detects ciphertext tampering', async () => {
   const prepared = await security.prepareSetup('Long distinct test passphrase 2026!');
   security.activate(prepared.key, 'owner@example.test', prepared.wrap_salt, prepared.wrapped_key, 0, false);
   const envelope = await security.encryptPayload({ app: 'noor', data: 'test' });
-  const last = envelope.ciphertext.slice(-1);
-  const changed = last === 'A' ? 'B' : 'A';
+  const first = envelope.ciphertext.slice(0, 1);
+  const changed = first === 'A' ? 'B' : 'A';
   const tampered = Object.assign({}, envelope, {
-    ciphertext: envelope.ciphertext.slice(0, -1) + changed
+    ciphertext: changed + envelope.ciphertext.slice(1)
   });
 
   await assert.rejects(security.decryptPayload(tampered));
