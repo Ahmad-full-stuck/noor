@@ -38,6 +38,8 @@
     var password = $('lockInput');
     var confirmWrap = $('lockConfirmWrap');
     var confirm = $('lockConfirm');
+    var setupTokenWrap = $('lockSetupTokenWrap');
+    var setupToken = $('lockSetupToken');
     var label = $('lockPasswordLabel');
     var hint = $('lockHint');
     var status = $('lockMode');
@@ -50,6 +52,8 @@
     if (password) password.autocomplete = setupRequired ? 'new-password' : 'current-password';
     if (confirmWrap) confirmWrap.hidden = !setupRequired;
     if (confirm) confirm.required = !!setupRequired;
+    if (setupTokenWrap) setupTokenWrap.hidden = !setupRequired;
+    if (setupToken) setupToken.required = !!setupRequired;
     if (hint) hint.textContent = offline
       ? 'وضع محلي: ستفتح النسخة المشفّرة المحفوظة على هذا الجهاز، وتنتظر المزامنة عودة الاتصال.'
       : setupRequired
@@ -216,11 +220,12 @@
     location.reload();
   }
 
-  async function setupAccount(email, password) {
+  async function setupAccount(email, password, setupToken) {
     var preparation = await window.NoorSecurity.prepareSetup(password);
     var result = await apiPost('/api/auth/setup', {
       email: email,
       password: password,
+      setup_token: setupToken,
       wrap_salt: preparation.wrap_salt,
       wrapped_key: preparation.wrapped_key
     });
@@ -271,8 +276,10 @@
     var email = String($('lockEmail').value || '').trim().toLowerCase();
     var password = String($('lockInput').value || '');
     var confirm = String(($('lockConfirm') || {}).value || '');
+    var setupToken = String(($('lockSetupToken') || {}).value || '').trim();
 
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return msg('أدخل بريداً إلكترونياً صالحاً.', true);
+    if (lockState.setupRequired && !setupToken) return msg('أدخل رمز التهيئة لمرة واحدة الذي يتيح إنشاء الحساب الأول.', true);
     if (lockState.setupRequired && !validPassword(password)) return msg('استخدم عبارة مرور لا تقل عن 14 محرفاً.', true);
     if (!lockState.setupRequired && !password) return msg('أدخل عبارة المرور.', true);
     if (lockState.setupRequired && password !== confirm) return msg('عبارتا المرور غير متطابقتين.', true);
@@ -281,7 +288,7 @@
     msg('');
     try {
       if (lockState.setupRequired) {
-        await setupAccount(email, password);
+        await setupAccount(email, password, setupToken);
         return;
       }
       try {
