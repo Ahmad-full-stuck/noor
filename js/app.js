@@ -177,7 +177,10 @@ async function openNoorPrivateFile(url, filename, shouldDownload) {
     const blob = new Blob([plain], { type: mime });
     const objectUrl = URL.createObjectURL(blob);
     const safeName = String(filename || 'noor-private-file').replace(/[\\/:*?"<>|]+/g, '_');
-    if (shouldDownload || (!/^application\/pdf$/i.test(mime) && !/^image\//i.test(mime) && !/^text\//i.test(mime))) {
+    const safeInlineType = /^application\/pdf$/i.test(mime) ||
+      /^image\/(?:png|jpeg|gif|webp|avif)$/i.test(mime) ||
+      /^text\/(?:plain|markdown|csv)$/i.test(mime);
+    if (shouldDownload || !safeInlineType) {
       if (popup && !popup.closed) popup.close();
       const a = document.createElement('a');
       a.href = objectUrl; a.download = safeName; a.rel = 'noopener';
