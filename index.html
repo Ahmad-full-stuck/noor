@@ -7,25 +7,42 @@
     <link rel="icon" href="data:,">
     <link rel="stylesheet" href="css/style.css?v=65">
     <link rel="stylesheet" href="css/planner.css?v=1">
+    <link rel="stylesheet" href="css/glass.css?v=1">
 </head>
 <body>
 
-<!-- ===== بوابة الدخول (مستخدم واحد) ===== -->
+<!-- ===== مصادقة حقيقية وخزنة مشفرة ===== -->
 <div class="noor-lock" id="noorLock" role="dialog" aria-modal="true" aria-labelledby="lockTitle">
   <div class="noor-lock__card" id="lockCard">
     <div class="noor-lock__brand">
-      <span class="noor-lock__mark">ن</span>
-      <h1 class="noor-lock__title" id="lockTitle">نُور</h1>
-      <p class="noor-lock__sub">نظام إدارة الحياة — نسخة شخصية</p>
+      <span class="noor-lock__mark" aria-hidden="true">ن</span>
+      <h1 class="noor-lock__title" id="lockTitle">تهيئة خزنتك الخاصة</h1>
+      <p class="noor-lock__sub" id="lockSub">مساحة خاصة للتخطيط والعمل والمعرفة.</p>
     </div>
-    <form class="noor-lock__form" id="lockForm" autocomplete="off">
-      <label class="noor-lock__label" for="lockInput">رمز الدخول</label>
-      <input class="noor-lock__input" id="lockInput" type="password" placeholder="••••••••"
-             autocomplete="off" spellcheck="false" autofocus>
-      <p class="noor-lock__msg" id="lockMsg" hidden></p>
-      <button class="noor-lock__btn" type="submit">فتح نُور</button>
+    <div class="noor-auth-badge"><span class="noor-auth-dot"></span><span id="lockMode">اتصال محمي</span></div>
+    <form class="noor-lock__form" id="lockForm" autocomplete="on">
+      <div class="field">
+        <label class="noor-lock__label" for="lockEmail">البريد الإلكتروني</label>
+        <input class="noor-lock__input" id="lockEmail" type="email" inputmode="email" autocomplete="username"
+               placeholder="name@example.com" maxlength="254" required>
+      </div>
+      <div class="field">
+        <label class="noor-lock__label" for="lockInput" id="lockPasswordLabel">عبارة المرور</label>
+        <input class="noor-lock__input" id="lockInput" type="password" autocomplete="current-password"
+               placeholder="14 محرفاً أو أكثر" minlength="14" maxlength="128" required>
+      </div>
+      <div class="field" id="lockConfirmWrap" hidden>
+        <label class="noor-lock__label" for="lockConfirm">تأكيد عبارة المرور</label>
+        <input class="noor-lock__input" id="lockConfirm" type="password" autocomplete="new-password"
+               placeholder="أعد كتابة العبارة" minlength="14" maxlength="128">
+      </div>
+      <p class="noor-lock__msg" id="lockMsg" role="status" aria-live="polite" hidden></p>
+      <button class="noor-lock__btn" id="lockSubmit" type="submit">دخول آمن</button>
     </form>
-    <p class="noor-lock__hint">هذه النسخة لمستخدم واحد.</p>
+    <div class="noor-lock__security-note">
+      <span class="noor-lock__security-icon" aria-hidden="true">◈</span>
+      <p id="lockHint">يُفتح مفتاح التشفير داخل جهازك ولا يُحفظ مكشوفاً.</p>
+    </div>
   </div>
 </div>
 
@@ -116,6 +133,16 @@
             <div class="header-right">
                 <div class="workspace-date" id="top-date"></div>
                 <div class="workspace-clock" id="top-clock"></div>
+                <div id="noor-account-control" hidden>
+                  <button type="button" class="noor-account-button" id="noor-account-button" aria-haspopup="true" aria-expanded="false">
+                    <span aria-hidden="true">◈</span><span>حسابي</span><span aria-hidden="true">⌄</span>
+                  </button>
+                  <div class="noor-account-menu" id="noor-account-menu" hidden>
+                    <div class="noor-account-email" id="noor-account-email"></div>
+                    <button type="button" class="btn btn-ghost" id="noor-change-password">تغيير كلمة المرور</button>
+                    <button type="button" class="btn btn-ghost" id="noor-logout">قفل الخزنة والخروج</button>
+                  </div>
+                </div>
             <div class="fab-wrap" id="fabWrap">
                 <div class="fab-menu" id="fabMenu"></div>
                 <button class="fab" id="fabMain" onclick="toggleFabMenu()" title="إضافة سريعة" aria-expanded="false">
@@ -142,9 +169,36 @@
     </div>
 </div>
 
+<dialog id="noor-security-dialog" aria-labelledby="noor-security-title">
+  <div class="noor-security-inner">
+    <div class="noor-security-title" id="noor-security-title">تغيير كلمة المرور</div>
+    <p class="noor-security-desc">تُستخدم العبارة الجديدة لتغليف مفتاح التشفير من جديد. لا تُعاد كتابة محتويات الخزنة مكشوفة.</p>
+    <form id="noor-password-form">
+      <div class="field">
+        <label for="noor-current-password">كلمة المرور الحالية</label>
+        <input id="noor-current-password" type="password" autocomplete="current-password" required maxlength="128">
+      </div>
+      <div class="field">
+        <label for="noor-new-password">كلمة المرور الجديدة</label>
+        <input id="noor-new-password" type="password" autocomplete="new-password" required minlength="14" maxlength="128">
+      </div>
+      <div class="field">
+        <label for="noor-confirm-password">تأكيد كلمة المرور الجديدة</label>
+        <input id="noor-confirm-password" type="password" autocomplete="new-password" required minlength="14" maxlength="128">
+      </div>
+      <div class="noor-security-status" id="noor-password-status" role="status" aria-live="polite"></div>
+      <div class="noor-security-actions">
+        <button class="btn btn-ghost" type="button" id="noor-password-close">إلغاء</button>
+        <button class="btn" type="submit" id="noor-password-submit">حفظ العبارة الجديدة</button>
+      </div>
+    </form>
+  </div>
+</dialog>
+
 <div id="toasts"></div>
 
         <script src="js/source-rules.js?v=1"></script>
+        <script src="js/security.js?v=1"></script>
         <script src="js/planner.js?v=1"></script>
         <script src="js/lock.js?v=1"></script>
 </body>
