@@ -18,10 +18,10 @@
       "migrations_dir": "cloudflare/migrations"
     }
   ],
-  "r2_buckets": [
+  "kv_namespaces": [
     {
       "binding": "FILES",
-      "bucket_name": "noor-private-files"
+      "id": "4658194ce72944cba5df9c427dcadc31"
     }
   ]
 }
