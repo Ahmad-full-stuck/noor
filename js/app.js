@@ -152,9 +152,60 @@ function esc(s) {
    (مثل https://user.github.io/noor/) بدل جذر النطاق. الروابط الخارجية تبقى كما هي. */
 function assetUrl(u) {
   var s = String(u || '');
-  if (!s || /^(?:[a-z][a-z0-9+.-]*:|\/\/|#|data:|blob:)/i.test(s)) return s;
+  if (!s || /^(?:[a-z][a-z0-9+.-]*:|\/\/|#|data:|blob:)/i.test(s) || /^\/api\//i.test(s)) return s;
   return s.replace(/^\/+/, '');
 }
+
+function isNoorPrivateFileUrl(value) {
+  try {
+    var parsed = new URL(String(value || ''), location.href);
+    return parsed.origin === location.origin && /^\/api\/files\/[0-9a-f-]{36}$/i.test(parsed.pathname);
+  } catch (_) { return false; }
+}
+
+/* الملفات الخاصة تصل مشفّرة من الخادم؛ فكّها داخل الجلسة فقط قبل العرض أو التنزيل. */
+async function openNoorPrivateFile(url, filename, shouldDownload) {
+  var popup = shouldDownload ? null : window.open('about:blank', '_blank');
+  try {
+    const response = await fetch(url, { credentials: 'same-origin', cache: 'no-store' });
+    if (!response.ok) throw new Error(response.status === 401 ? 'انتهت الجلسة؛ سجّل الدخول من جديد' : 'تعذر فتح الملف الخاص');
+    const iv = response.headers.get('X-Noor-IV');
+    const mime = response.headers.get('X-Noor-Mime') || 'application/octet-stream';
+    if (!iv || response.headers.get('X-Noor-Encrypted') !== '1') throw new Error('الاستجابة ليست ملفاً مشفّراً صالحاً');
+    const ciphertext = await response.arrayBuffer();
+    const plain = await NoorSecurity.decryptFile(iv, ciphertext);
+    const blob = new Blob([plain], { type: mime });
+    const objectUrl = URL.createObjectURL(blob);
+    const safeName = String(filename || 'noor-private-file').replace(/[\\/:*?"<>|]+/g, '_');
+    if (shouldDownload || (!/^application\/pdf$/i.test(mime) && !/^image\//i.test(mime) && !/^text\//i.test(mime))) {
+      if (popup && !popup.closed) popup.close();
+      const a = document.createElement('a');
+      a.href = objectUrl; a.download = safeName; a.rel = 'noopener';
+      document.body.appendChild(a); a.click(); a.remove();
+    } else if (popup && !popup.closed) {
+      popup.opener = null;
+      popup.location.href = objectUrl;
+    } else {
+      const a = document.createElement('a');
+      a.href = objectUrl; a.target = '_blank'; a.rel = 'noopener';
+      document.body.appendChild(a); a.click(); a.remove();
+    }
+    setTimeout(function () { URL.revokeObjectURL(objectUrl); }, 120000);
+  } catch (error) {
+    if (popup && !popup.closed) popup.close();
+    if (typeof showToast === 'function') showToast(error.message || 'تعذر فتح الملف الخاص', 'bad');
+  }
+}
+
+document.addEventListener('click', function (event) {
+  var link = event.target && event.target.closest ? event.target.closest('a[href]') : null;
+  if (!link) return;
+  var href = link.getAttribute('href') || '';
+  if (!isNoorPrivateFileUrl(href)) return;
+  event.preventDefault();
+  openNoorPrivateFile(href, link.getAttribute('download') || link.dataset.fileName || '', link.hasAttribute('download'));
+}, true);
+
 
 function fileToBase64(file, maxW, maxH, cb) {
   if (!file || !file.type.startsWith('image/')) return cb(null);
@@ -3226,27 +3277,36 @@ const Bridge = {
   }
 };
 
-/* رفع ملفات كبيرة عبر الخادم (بث مباشر إلى القرص)، أو base64 في الوضع المحلي */
+/* الملفات الخاصة تُشفّر محلياً قبل أن تغادر الجهاز. */
 async function uploadBigFile(file, onProgress) {
   if (!(file instanceof File)) throw new Error('ملف غير صالح');
-  if (Bridge.serverOn) {
-    const safeName = file.name.replace(/[\\/:*?"<>|]+/g, '_');
+  if (Bridge.serverOn && window.NOOR_CLOUD_MODE) {
+    const encrypted = await NoorSecurity.encryptFile(file);
     const xhr = new XMLHttpRequest();
-    const url = '/api/upload/' + encodeURIComponent(Date.now() + '-' + safeName);
+    const url = '/api/upload/private';
     const result = await new Promise((resolve, reject) => {
       xhr.open('PUT', url, true);
+      xhr.withCredentials = true;
       xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+      xhr.setRequestHeader('X-Noor-IV', encrypted.iv);
+      xhr.setRequestHeader('X-Noor-Mime', file.type || 'application/octet-stream');
       if (xhr.upload && onProgress) xhr.upload.onprogress = (ev) => { if (ev.lengthComputable) onProgress(ev.loaded / ev.total); };
       xhr.onload = () => {
-        try { const j = JSON.parse(xhr.responseText); if (xhr.status >= 200 && xhr.status < 300 && j.ok) resolve(j); else reject(new Error(j.error || 'فشل الرفع')); }
-        catch (e) { reject(new Error('فشل الرفع')); }
+        try {
+          const j = JSON.parse(xhr.responseText);
+          if (xhr.status >= 200 && xhr.status < 300 && j.ok) resolve(j);
+          else reject(new Error(j.error || 'فشل رفع الملف المشفّر'));
+        } catch (e) { reject(new Error('فشل الرفع')); }
       };
       xhr.onerror = () => reject(new Error('تعذر الاتصال بالخادم'));
-      xhr.send(file);
+      xhr.send(encrypted.ciphertext.buffer);
     });
-    return result;
+    return Object.assign({}, result, { name: file.name, noor_private: true });
   }
-  if (file.size > 8 * 1024 * 1024) throw new Error('في الوضع المحلي الحد 8MB — شغّل الخادم لرفع الملفات الضخمة');
+  if (window.NOOR_CLOUD_MODE && file.size > 4 * 1024 * 1024) {
+    throw new Error('لرفع ملف كبير بأمان، أعد الاتصال بالخادم. حد الرفع دون اتصال 4MB.');
+  }
+  if (file.size > 8 * 1024 * 1024) throw new Error('في الوضع المحلي الحد 8MB');
   const dataUrl = await new Promise((resolve, reject) => {
     const fr = new FileReader();
     fr.onload = () => resolve(fr.result);
