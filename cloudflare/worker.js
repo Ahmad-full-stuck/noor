@@ -3,8 +3,8 @@
 const SESSION_COOKIE = 'noor_session';
 const SESSION_TTL_SECONDS = 7 * 24 * 60 * 60;
 const PASSWORD_MIN_LENGTH = 14;
-const MAX_JSON_BYTES = 3 * 1024 * 1024;
-const MAX_FILE_BYTES = 50 * 1024 * 1024;
+const MAX_JSON_BYTES = 12 * 1024 * 1024;
+const MAX_FILE_BYTES = 20 * 1024 * 1024; // KV values are capped below 25 MiB
 const PBKDF2_ITERATIONS = 310000;
 
 function securityHeaders(extra) {
@@ -103,7 +103,7 @@ function validEncryptedPayload(value) {
     typeof value.iv === 'string' && /^[a-zA-Z0-9_-]{16,32}$/.test(value.iv) &&
     typeof value.ciphertext === 'string' &&
     value.ciphertext.length >= 16 &&
-    value.ciphertext.length <= 2 * MAX_JSON_BYTES &&
+    value.ciphertext.length <= 16 * 1024 * 1024 &&
     /^[a-zA-Z0-9_-]+$/.test(value.ciphertext);
 }
 
@@ -399,15 +399,15 @@ async function uploadFile(request, env, user) {
   if (!sameOrigin(request)) return fail('طلب غير مسموح', 403, 'origin_rejected');
   if (!env.FILES) return fail('تخزين الملفات غير مربوط', 503, 'file_storage_unavailable');
   const size = Number(request.headers.get('Content-Length') || 0);
-  if (size > MAX_FILE_BYTES + 32) return fail('الملف أكبر من 50 ميغابايت', 413, 'file_too_large');
+  if (size > MAX_FILE_BYTES + 32) return fail('الحد الحالي للملف المشفر 20 ميغابايت؛ فعّل تخزين R2 للملفات الأكبر', 413, 'file_too_large');
   const iv = request.headers.get('X-Noor-IV') || '';
   const mime = (request.headers.get('X-Noor-Mime') || 'application/octet-stream').slice(0, 120);
   if (!/^[a-zA-Z0-9_-]{16,32}$/.test(iv)) return fail('بيانات تشفير الملف غير صالحة', 400);
   const bytes = await request.arrayBuffer();
-  if (bytes.byteLength > MAX_FILE_BYTES + 32) return fail('الملف أكبر من 50 ميغابايت', 413, 'file_too_large');
+  if (bytes.byteLength > MAX_FILE_BYTES + 32) return fail('الحد الحالي للملف المشفر 20 ميغابايت؛ فعّل تخزين R2 للملفات الأكبر', 413, 'file_too_large');
   const id = crypto.randomUUID();
   const objectKey = user.id + '/' + id;
-  await env.FILES.put(objectKey, bytes, { httpMetadata: { contentType: 'application/octet-stream' } });
+  await env.FILES.put(objectKey, bytes, { metadata: { iv: iv, mime_type: mime, user_id: user.id, size_bytes: bytes.byteLength } });
   try {
     await env.DB.prepare('INSERT INTO noor_files (id, user_id, object_key, iv, mime_type, size_bytes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
       .bind(id, user.id, objectKey, iv, mime, bytes.byteLength, new Date().toISOString()).run();
@@ -422,9 +422,9 @@ async function readFile(request, env, user, id) {
   const row = await env.DB.prepare('SELECT object_key, iv, mime_type, size_bytes FROM noor_files WHERE id = ? AND user_id = ?')
     .bind(id, user.id).first();
   if (!row) return fail('الملف غير موجود', 404, 'file_not_found');
-  const object = await env.FILES.get(row.object_key);
+  const object = await env.FILES.get(row.object_key, 'arrayBuffer');
   if (!object) return fail('الملف غير موجود في التخزين', 404, 'file_missing');
-  return new Response(object.body, {
+  return new Response(object, {
     status: 200,
     headers: securityHeaders({
       'Content-Type': 'application/octet-stream',
