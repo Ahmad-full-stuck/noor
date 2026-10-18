@@ -109,8 +109,13 @@
     document.body.classList.add('noor-unlocked');
 
     await addScript('js/store.js?v=cloud-secure-1');
-    await addScript('js/app.js?v=cloud-secure-1');
+    if (snapshot && snapshot.data && window.NoorStore && typeof window.NoorStore.restore === 'function') {
+      window.NoorStore.restore(snapshot.data);
+      window.NoorSecurity.restoreVolatile(snapshot.client_state || {});
+    }
+    window.NOOR_BOOT_SNAPSHOT = null;
     window.NOOR_APP_READY = true;
+    await addScript('js/app.js?v=cloud-secure-1');
     mountAccountControls();
     if (window.NOOR_OFFLINE) {
       updateSyncBadge('وضع محلي — المزامنة تنتظر الاتصال', 'warn');
