@@ -250,6 +250,12 @@ async function authSetup(request, env) {
   if (!validWrappedKey(body.wrap_salt, body.wrapped_key)) return fail('تعذر إنشاء مفتاح التشفير المحلي', 400);
 
   if (!(await noUsers(env))) return fail('تم إعداد الحساب مسبقاً؛ استخدم تسجيل الدخول', 409, 'setup_complete');
+  if (typeof env.NOOR_SETUP_TOKEN !== 'string' || !env.NOOR_SETUP_TOKEN) {
+    return fail('بوابة التأسيس الأولى غير مهيأة بعد', 503, 'setup_gate_unconfigured');
+  }
+  if (!equalConstantTime(String(body.setup_token || ''), env.NOOR_SETUP_TOKEN)) {
+    return fail('رمز التهيئة لمرة واحدة غير صحيح', 403, 'invalid_setup_token');
+  }
 
   const pwSalt = randomHex(16);
   const pwHash = await passwordHash(password, pwSalt);
