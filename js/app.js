@@ -2942,6 +2942,70 @@ function _sendLocal(method, path, body) {
   return null;
 }
 
+
+function openNoorConflictDialog(localRevision, serverRevision) {
+  const dialog = document.getElementById('noor-conflict-dialog');
+  const detail = document.getElementById('noor-conflict-detail');
+  if (detail) detail.textContent =
+    'نسخة هذا الجهاز رقم ' + localRevision + '، ونسخة الخادم رقم ' + serverRevision +
+    '. لم نستبدل أياً منهما. اختر بوضوح أي نسخة تريد اعتمادها.';
+  if (dialog && typeof dialog.showModal === 'function' && !dialog.open) dialog.showModal();
+}
+
+async function resolveNoorConflict(choice) {
+  const dialog = document.getElementById('noor-conflict-dialog');
+  try {
+    if (choice === 'local') {
+      if (!confirm('سيُعتمد تعديل هذا الجهاز فوق النسخة السحابية الأحدث. النسخة السحابية السابقة ستبقى غير معتمدة. هل تتابع؟')) return;
+      NoorSecurity.setRevision(Number(Bridge.conflictServerRevision || 0));
+      Bridge.conflict = false;
+      Bridge.pendingPush = false;
+      Bridge.markDirty();
+      if (dialog && dialog.open) dialog.close();
+      await Bridge.pushNow();
+      return;
+    }
+    if (choice === 'server') {
+      const response = await fetch('/api/sync', { cache: 'no-store', credentials: 'same-origin' });
+      if (!response.ok) throw new Error('تعذر تحميل نسخة الخادم');
+      const encrypted = await response.json();
+      const snapshot = await NoorSecurity.decryptPayload(encrypted);
+      if (!snapshot || snapshot.format !== 'noor-secure-v1' || !snapshot.data || snapshot.data.app !== 'noor') {
+        throw new Error('النسخة السحابية ليست بصيغة معروفة');
+      }
+      const revision = Number(response.headers.get('X-Noor-Revision') || Bridge.conflictServerRevision || 0);
+      Bridge._applyingRemote = true;
+      try {
+        NoorStore.restore(snapshot.data);
+        NoorSecurity.restoreVolatile(snapshot.client_state || {});
+        NoorSecurity.setRevision(revision);
+        NoorSecurity.rememberEncrypted(encrypted, revision, false);
+        Bridge.clearDirty();
+        Bridge.conflict = false;
+        Bridge.pendingPush = false;
+        NoorSecurity.purgeLegacyPlaintext();
+      } finally { Bridge._applyingRemote = false; }
+      if (dialog && dialog.open) dialog.close();
+      try { if (typeof Bridge.afterPull === 'function') Bridge.afterPull(); } catch (_) {}
+      updateNoorCloudStatus('تم اعتماد نسخة الخادم؛ نسخة الجهاز الأخرى بقيت محفوظة مشفّرة', 'ok');
+      if (typeof showToast === 'function') showToast('اعتمدنا نسخة الخادم. توجد نسخة مشفّرة احتياطية محلية إذا احتجت مراجعتها.', 'ok');
+      return;
+    }
+    if (choice === 'export') {
+      const raw = localStorage.getItem('noor_encrypted_conflict_v1');
+      if (!raw) throw new Error('لا توجد نسخة تعارض مشفّرة للتنزيل');
+      const blob = new Blob([raw], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = 'noor-encrypted-conflict-backup.json';
+      a.click(); URL.revokeObjectURL(url);
+      return;
+    }
+  } catch (error) {
+    if (typeof showToast === 'function') showToast(error.message || 'تعذّر حل تعارض المزامنة', 'bad');
+  }
+}
+
 /* ===== جسر الخلود: قاعدة البيانات على القرص هي المخزن الرئيسي =====
    كل حفظ محلي يُدفع فوراً كلقطة كاملة للخادم، مع إعادة محاولة كل 3 ثوانٍ حتى يصل الحفظ،
    ولقطة أخيرة إلزامية عند إغلاق الصفحة، وعند الإقلاع يُستعاد الأحدث بين المتصفح والقرص. */
@@ -2968,6 +3032,7 @@ const Bridge = {
   _reconciling: false,
   _applyingRemote: false,
   conflict: false,
+  conflictServerRevision: 0,
   async reconcile() {
     if (!this.serverOn || this._reconciling) return;
     this._reconciling = true;
@@ -2996,12 +3061,42 @@ const Bridge = {
       }
 
       const serverRevision = Number(r.headers.get('X-Noor-Revision') || info.revision || 0);
+      const cacheInfo = NoorSecurity.getEncryptedCacheInfo();
+      if (cacheInfo && cacheInfo.pending) {
+        const cached = await NoorSecurity.readEncryptedCache();
+        if (cached && cached.format === 'noor-secure-v1' && cached.data && cached.data.app === 'noor') {
+          NoorSecurity.backupEncryptedCache();
+          this._applyingRemote = true;
+          try {
+            NoorStore.restore(cached.data);
+            NoorSecurity.restoreVolatile(cached.client_state || {});
+            if (cacheInfo.revision !== serverRevision) {
+              this.conflict = true;
+              this.conflictServerRevision = serverRevision;
+              updateNoorCloudStatus('تعارض مزامنة — النسختان محفوظتان', 'warn');
+              if (typeof openNoorConflictDialog === 'function') openNoorConflictDialog(cacheInfo.revision, serverRevision);
+              return;
+            }
+            NoorSecurity.setRevision(serverRevision);
+            this.conflict = false;
+            this.clearDirty();
+          } finally {
+            this._applyingRemote = false;
+          }
+          /* نسخة محلية مشفّرة لم تصل للخادم، لكن رقم المراجعة لا يزال مطابقاً. */
+          this.markDirty();
+          await this.pushNow();
+          try { if (typeof this.afterPull === 'function') this.afterPull(); } catch (e) {}
+          return;
+        }
+      }
+
       this._applyingRemote = true;
       try {
         NoorStore.restore(snap.data);
         NoorSecurity.restoreVolatile(snap.client_state || {});
         NoorSecurity.setRevision(serverRevision);
-        NoorSecurity.rememberEncrypted(envelope, serverRevision);
+        NoorSecurity.rememberEncrypted(envelope, serverRevision, false);
         this.clearDirty();
         this.conflict = false;
         window.NOOR_LEGACY_IMPORT = false;
@@ -3040,7 +3135,7 @@ const Bridge = {
       const result = await r.json().catch(() => ({}));
       if (r.ok && result.ok) {
         NoorSecurity.setRevision(Number(result.revision));
-        NoorSecurity.rememberEncrypted(encrypted, Number(result.revision));
+        NoorSecurity.rememberEncrypted(encrypted, Number(result.revision), false);
         this.clearDirty();
         this.conflict = false;
         NoorSecurity.purgeLegacyPlaintext();
@@ -3050,7 +3145,7 @@ const Bridge = {
         this._retryT && clearTimeout(this._retryT);
         this._retryT = null;
         /* لا نعيد الإرسال تلقائياً: يحفظ المتصفح نسخة مشفّرة لتفادي فقد تعديلات هذا الجهاز. */
-        NoorSecurity.rememberEncrypted(encrypted, expectedRevision);
+        NoorSecurity.rememberEncrypted(encrypted, expectedRevision, true);
         updateNoorCloudStatus('تعارض مزامنة — لم تُستبدل البيانات', 'warn');
         if (typeof showToast === 'function') showToast('توجد تغييرات من جهاز آخر. لم نكتب فوقها؛ احتفظنا بنسخة مشفّرة من تعديلك.', 'bad');
       } else if (r.status === 401) {
@@ -3102,7 +3197,7 @@ const Bridge = {
         const result = await r.json().catch(() => ({}));
         if (r.ok && result.ok) {
           NoorSecurity.setRevision(Number(result.revision));
-          NoorSecurity.rememberEncrypted(encrypted, Number(result.revision));
+          NoorSecurity.rememberEncrypted(encrypted, Number(result.revision), false);
           bridge.clearDirty();
           NoorSecurity.purgeLegacyPlaintext();
         }
