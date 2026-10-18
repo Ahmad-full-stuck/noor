@@ -508,7 +508,7 @@ export default {
       if (env.ASSETS) {
         asset = await env.ASSETS.fetch(request);
       } else if (EMBEDDED_ASSETS) {
-        const key = decodeURIComponent(url.pathname).replace(/^\\/+/, '') || 'index.html';
+        const key = decodeURIComponent(url.pathname).replace(/^\/+/, '') || 'index.html';
         const selected = EMBEDDED_ASSETS[key];
         if (typeof selected !== 'string') return fail('الملف غير موجود', 404, 'asset_not_found');
         const body = request.method === 'HEAD' ? null : selected;
