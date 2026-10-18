@@ -6260,28 +6260,73 @@ function stopFreeze() {
   openSettings(); renderTasks();
 }
 
-function downloadBackup() {
-  const obj = NoorStore.dump();
+async function sealNoorBackup(value) {
+  if (!window.NOOR_CLOUD_MODE) return value;
+  if (!window.NoorSecurity || !NoorSecurity.isUnlocked()) {
+    throw new Error('افتح الخزنة أولاً قبل إنشاء نسخة احتياطية مشفّرة');
+  }
+  return NoorSecurity.encryptPayload({ format: 'noor-backup-v1', payload: value });
+}
+
+async function unsealNoorBackup(value) {
+  if (value && value.encrypted === true && Number(value.v) === 1) {
+    if (!window.NOOR_CLOUD_MODE || !window.NoorSecurity || !NoorSecurity.isUnlocked()) {
+      throw new Error('هذه نسخة مشفّرة. افتح حساب نُور نفسه لفكها');
+    }
+    const decoded = await NoorSecurity.decryptPayload(value);
+    if (!decoded || decoded.format !== 'noor-backup-v1' || !decoded.payload) {
+      throw new Error('صيغة النسخة الاحتياطية المشفّرة غير صالحة');
+    }
+    return decoded.payload;
+  }
+  if (window.NOOR_CLOUD_MODE) {
+    throw new Error('رفض نُور النسخة غير المشفّرة. في الوضع الآمن لا تُقبل ملفات النسخ النصية');
+  }
+  return value;
+}
+
+function downloadNoorJson(obj, filename) {
   const blob = new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = 'noor-backup-' + todayISO() + '.json';
+  a.href = url;
+  a.download = filename;
   document.body.appendChild(a);
   a.click();
-  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 100);
+  setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 150);
+}
+
+async function downloadBackup() {
+  try {
+    const sealed = await sealNoorBackup(NoorStore.dump());
+    downloadNoorJson(sealed, 'noor-backup-' + todayISO() + '.json');
+    showToast(window.NOOR_CLOUD_MODE ? 'تم إنشاء نسخة احتياطية مشفّرة' : 'تم تحميل النسخة الاحتياطية');
+  } catch (err) {
+    showToast('تعذر إنشاء النسخة الاحتياطية: ' + err.message, 'bad');
+  }
 }
 
 async function doRestore(e) {
-  const f = e.target.files[0];
-  if (!f) return;
-  if (!confirm('الاستعادة ستحذف كل البيانات الحالية وتستبدلها بمحتويات الملف. متابعة؟')) return;
+  const file = e.target.files[0];
+  if (!file) return;
+  e.target.value = '';
+  if (!confirm('الاستعادة ستستبدل بيانات الخزنة الحالية. تابع فقط إذا كانت النسخة موثوقة ولديك نسخة احتياطية حالية.')) return;
   try {
-    const obj = JSON.parse(await f.text());
-    NoorStore.restore(obj);
-    showToast('تمت الاستعادة بنجاح');
+    const parsed = JSON.parse(await file.text());
+    const restored = await unsealNoorBackup(parsed);
+    const data = restored && restored.data && !restored.app ? restored.data : restored;
+    if (!data || data.app !== 'noor' || !data.data || !data.data.settings) {
+      throw new Error('صيغة النسخة الاحتياطية غير صالحة');
+    }
+    NoorStore.restore(data);
+    Bridge.markDirty();
+    Bridge.queuePush();
+    showToast('تمت الاستعادة؛ جارٍ حفظها مشفّرة');
     closeModal();
     await go('tasks');
-  } catch (err) { showToast('فشلت الاستعادة: ' + err.message, 'bad'); }
+  } catch (err) {
+    showToast('فشلت الاستعادة: ' + err.message, 'bad');
+  }
 }
 
 async function doReset() {
@@ -6315,75 +6360,71 @@ async function factoryReset() {
     return showToast('يجب تأكيد كل الخيارات أولاً', 'bad');
   }
   play('click');
-  /* 1) أخذ نسخة احتياطية كاملة */
-  const fullBackup = NoorStore.dump();
-  const backupData = JSON.stringify(fullBackup, null, 2);
-  const backupObj = {
-    version: '2.0',
-    timestamp: new Date().toISOString(),
-    appVersion: 'noor-' + (document.querySelector('script[src*="app.js"]')?.src?.match(/v=(\d+)/)?.[1] || 'unknown'),
-    data: fullBackup
-  };
-  const backupStr = JSON.stringify(backupObj, null, 2);
-  /* 2) تحميل الملف تلقائياً */
-  if (download.checked) {
-    const blob = new Blob([backupStr], { type: 'application/json' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = 'noor-factory-reset-backup-' + todayISO() + '.json';
-    document.body.appendChild(a);
-    a.click();
-    setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 100);
-  }
-  /* 3) حفظ في localStorage كنسخة "factory-reset-last" للاستعادة السريعة */
-  try { localStorage.setItem('noor_factory_reset_backup', backupStr); } catch (e) {}
-  /* 4) تنفيذ الحذف الكامل */
   try {
+    const fullBackup = NoorStore.dump();
+    const backupObj = {
+      version: '2.0',
+      timestamp: new Date().toISOString(),
+      appVersion: 'noor-secure',
+      data: fullBackup
+    };
+    const sealed = await sealNoorBackup(backupObj);
+    const backupStr = JSON.stringify(sealed, null, 2);
+    if (download.checked) {
+      downloadNoorJson(sealed, 'noor-factory-reset-backup-' + todayISO() + '.json');
+    }
+    /* في وضع السحابة يحفظ المخزن المحلي هذه النسخة داخل الذاكرة المؤقتة فقط؛ المحتوى نفسه مشفّر. */
+    try { localStorage.setItem('noor_factory_reset_backup', backupStr); } catch (_) {}
     NoorStore.factoryReset();
-    showToast('✅ تمت إعادة ضبط المصنع — النظام فارغ الآن');
+    Bridge.markDirty();
+    Bridge.queuePush();
+    showToast('تمت إعادة ضبط المصنع — نُزّلت النسخة الاحتياطية المشفّرة قبل المسح');
     play('success');
+    closeModal();
+    setTimeout(() => { go('tasks'); }, 300);
   } catch (e) {
-    showToast('خطأ أثناء الحذف: ' + e.message, 'bad');
-    return;
+    showToast('تعذر إنشاء النسخة قبل المسح: ' + e.message, 'bad');
   }
-  closeModal();
-  setTimeout(() => { go('tasks'); }, 300);
 }
 
 /* استعادة من نسخة إعادة ضبط المصنع */
 async function restoreFactoryResetBackup() {
   const raw = localStorage.getItem('noor_factory_reset_backup');
   if (!raw) return showToast('لا توجد نسخة احتياطية من إعادة ضبط المصنع', 'bad');
-  if (!confirm('الاستعادة ستحذف كل البيانات الحالية وتستبدلها بنسخة "إعادة ضبط المصنع" الأخيرة. متابعة؟')) return;
+  if (!confirm('الاستعادة ستحذف البيانات الحالية وتستبدلها بالنسخة الأخيرة. متابعة؟')) return;
   try {
-    const obj = JSON.parse(raw);
-    if (obj.data) {
-      NoorStore.restore(obj.data);
-      showToast('✅ تمت استعادة نسخة إعادة ضبط المصنع');
-      closeModal();
-      await go('tasks');
-    } else {
-      showToast('صيغة النسخة الاحتياطية غير صالحة', 'bad');
+    const parsed = JSON.parse(raw);
+    const obj = await unsealNoorBackup(parsed);
+    const data = obj && obj.data && !obj.app ? obj.data : obj;
+    if (!data || data.app !== 'noor' || !data.data || !data.data.settings) {
+      throw new Error('صيغة النسخة الاحتياطية غير صالحة');
     }
-  } catch (e) { showToast('فشلت الاستعادة: ' + e.message, 'bad'); }
+    NoorStore.restore(data);
+    Bridge.markDirty();
+    Bridge.queuePush();
+    showToast('تمت الاستعادة؛ جارٍ حفظها مشفّرة');
+    closeModal();
+    await go('tasks');
+  } catch (e) {
+    showToast('فشلت الاستعادة: ' + e.message, 'bad');
+  }
 }
 
 async function doArchiveAll() {
   if (!confirm('⚠ سيتم أرشفة كل البيانات وتحميل نسخة احتياطية. لن يُحذف شيء — يمكنك استعادته من الأرشيف.')) return;
   if (!confirm('تأكيد أخير: أرشفة شاملة + تحميل نسخة احتياطية؟')) return;
   try {
-    const backup = NoorStore.dump();
-    const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url; a.download = 'noor-backup-' + todayISO() + '.json';
-    document.body.appendChild(a); a.click(); document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    const backup = await sealNoorBackup(NoorStore.dump());
+    downloadNoorJson(backup, 'noor-backup-' + todayISO() + '.json');
     NoorStore.archiveAll();
-    showToast('تمت الأرشفة الشاملة — تحمّلت نسخة احتياطية');
+    Bridge.markDirty();
+    Bridge.queuePush();
+    showToast(window.NOOR_CLOUD_MODE ? 'تمت الأرشفة وحمّلت نسخة مشفّرة' : 'تمت الأرشفة الشاملة — تحمّلت نسخة احتياطية');
     closeModal();
     await go('tasks');
-  } catch (err) { showToast(err.message, 'bad'); }
+  } catch (err) {
+    showToast(err.message, 'bad');
+  }
 }
 
 async function loadBackupStatus() {
