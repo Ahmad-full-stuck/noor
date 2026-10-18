@@ -2964,36 +2964,56 @@ const Bridge = {
     } catch (e) { this.serverOn = false; }
   },
 
-  /* عند الإقلاع: الأحدث يفوز — نقارن آخر تغيير محلي بآخر لقطة محفوظة على القرص */
+  /* في وضع السحابة، الخادم هو مصدر الحقيقة. لا نقبل إلا لقطة مشفرة ولا نكتب فوق مراجعة أحدث بصمت. */
   _reconciling: false,
+  _applyingRemote: false,
+  conflict: false,
   async reconcile() {
     if (!this.serverOn || this._reconciling) return;
     this._reconciling = true;
     try {
-      let info = null;
-      try { info = await (await fetch('/api/sync/info', { cache: 'no-store' })).json(); } catch (e) { console.error('[noor] فشل قراءة حالة المزامنة:', e); this.scheduleRetry(); return; }
-      if (!info || !info.exists) { this.markDirty(); this.pushNow(); return; }
-      const localTs = Number(localStorage.getItem('noor_last_change') || 0);
-      const serverTs = Date.parse(info.saved_at || '') || 0;
-      /* صفر مخاطرة: أي تغيير محلي لم يصل القاعدة بعد يفوز دائمًا — لا نسحب لقطة فوقه */
-      const dirty = localStorage.getItem('noor_dirty') === '1';
-      /* لا نستبدل بيانات المستخدم المحلية بلقطة الخادم إلا إن كانت محليًا فارغة تمامًا (أول تشغيل) */
-      const localEmpty = NoorStore.isEmpty && NoorStore.isEmpty();
-      if (!dirty && localEmpty && serverTs > 0) {
-        try {
-          const r = await fetch('/api/sync', { cache: 'no-store' });
-          if (r.ok) {
-            const snap = await r.json();
-            NoorStore.restore(snap);
-            localStorage.setItem('noor_last_change', String(Date.parse(snap.exported_at) || serverTs));
-            this.clearDirty();
-            /* جُلبت لقطة أحدث من القرص: أعد رسم الصفحة الحالية لتعرضها فوراً */
-            try { if (typeof this.afterPull === 'function') this.afterPull(); } catch (e) {}
-          }
-        } catch (e) { console.error('[noor] تفشل سحب اللقطة من الخادم:', e); }
-      } else {
-        this.pushNow();
+      let infoResponse = await fetch('/api/sync/info', { cache: 'no-store', credentials: 'same-origin' });
+      if (!infoResponse.ok) {
+        if (infoResponse.status === 401) { this.serverOn = false; if (typeof showToast === 'function') showToast('انتهت الجلسة. أعد تسجيل الدخول.', 'bad'); }
+        else this.scheduleRetry();
+        return;
       }
+      const info = await infoResponse.json();
+      if (!info || !info.exists) {
+        /* عند إنشاء الحساب الأول، قد تكون بيانات المتصفح القديمة موجودة في الذاكرة المؤقتة فقط. */
+        NoorSecurity.setRevision(Number(info && info.revision || 0));
+        this.markDirty();
+        await this.pushNow();
+        return;
+      }
+
+      const r = await fetch('/api/sync', { cache: 'no-store', credentials: 'same-origin' });
+      if (!r.ok) throw new Error('تعذر جلب النسخة المشفرة من الخادم');
+      const envelope = await r.json();
+      const snap = await NoorSecurity.decryptPayload(envelope);
+      if (!snap || snap.format !== 'noor-secure-v1' || !snap.data || snap.data.app !== 'noor') {
+        throw new Error('صيغة النسخة المشفرة غير معروفة');
+      }
+
+      const serverRevision = Number(r.headers.get('X-Noor-Revision') || info.revision || 0);
+      this._applyingRemote = true;
+      try {
+        NoorStore.restore(snap.data);
+        NoorSecurity.restoreVolatile(snap.client_state || {});
+        NoorSecurity.setRevision(serverRevision);
+        NoorSecurity.rememberEncrypted(envelope, serverRevision);
+        this.clearDirty();
+        this.conflict = false;
+        window.NOOR_LEGACY_IMPORT = false;
+        NoorSecurity.purgeLegacyPlaintext();
+      } finally {
+        this._applyingRemote = false;
+      }
+      try { if (typeof this.afterPull === 'function') this.afterPull(); } catch (e) {}
+    } catch (e) {
+      console.error('[noor] فشلت المزامنة الآمنة:', e);
+      if (typeof showToast === 'function') showToast('تعذرت المزامنة الآمنة. بقيت البيانات في الذاكرة/النسخة المشفرة.', 'bad');
+      this.scheduleRetry();
     } finally {
       this._reconciling = false;
     }
@@ -3003,30 +3023,54 @@ const Bridge = {
   markDirty() { try { localStorage.setItem('noor_dirty', '1'); } catch (e) {} },
   clearDirty() { try { localStorage.removeItem('noor_dirty'); } catch (e) {} },
 
-  pushNow() {
-    if (!this.serverOn) return;
+  async pushNow() {
+    if (!this.serverOn || this._applyingRemote || !NoorSecurity.isUnlocked()) return;
     if (this.pushing) { this.pendingPush = true; return; }
     this.pushing = true;
     this.markDirty();
     try {
-      fetch('/api/sync', {
+      const expectedRevision = NoorSecurity.getRevision();
+      const encrypted = await NoorSecurity.makeSyncEnvelope();
+      const r = await fetch('/api/sync', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Noor-Sync': '1' },
-        body: JSON.stringify(NoorStore.dump())
-      }).then((r) => {
-        this.pushing = false;
-        if (r && r.ok) {
-          /* وصلت اللقطة للقاعدة: نستعمل ساعة العميل حصرياً في كل الطوابع،
-             لأن المقارنة عند الإقلاع تجري بين هذا الطابع وطوابع الحفظ المحلية (ساعة العميل أيضاً)
-             — خلط ساعة الخادم يفتح نافذة تراجع لو كانت ساعته متقدمة */
-          try { localStorage.setItem('noor_last_change', String(Date.now())); } catch (e) {}
-          this.clearDirty();
-        } else {
-          this.scheduleRetry();
-        }
-        if (this.pendingPush) { this.pendingPush = false; this.queuePush(); }
-      }).catch(() => { this.pushing = false; this.scheduleRetry(); });
-    } catch (e) { this.pushing = false; this.scheduleRetry(); }
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json', 'If-Match': String(expectedRevision) },
+        body: JSON.stringify(encrypted)
+      });
+      const result = await r.json().catch(() => ({}));
+      if (r.ok && result.ok) {
+        NoorSecurity.setRevision(Number(result.revision));
+        NoorSecurity.rememberEncrypted(encrypted, Number(result.revision));
+        this.clearDirty();
+        this.conflict = false;
+        NoorSecurity.purgeLegacyPlaintext();
+        updateNoorCloudStatus('مزامنة مشفّرة ومكتملة', 'ok');
+      } else if (r.status === 409 || result.code === 'revision_conflict') {
+        this.conflict = true;
+        this._retryT && clearTimeout(this._retryT);
+        this._retryT = null;
+        /* لا نعيد الإرسال تلقائياً: يحفظ المتصفح نسخة مشفّرة لتفادي فقد تعديلات هذا الجهاز. */
+        NoorSecurity.rememberEncrypted(encrypted, expectedRevision);
+        updateNoorCloudStatus('تعارض مزامنة — لم تُستبدل البيانات', 'warn');
+        if (typeof showToast === 'function') showToast('توجد تغييرات من جهاز آخر. لم نكتب فوقها؛ احتفظنا بنسخة مشفّرة من تعديلك.', 'bad');
+      } else if (r.status === 401) {
+        this.serverOn = false;
+        NoorSecurity.setOnline(false);
+        updateNoorCloudStatus('انتهت الجلسة — سجّل الدخول مجدداً', 'warn');
+      } else {
+        this.scheduleRetry();
+      }
+    } catch (e) {
+      NoorSecurity.setOnline(false);
+      updateNoorCloudStatus('تعذّر الاتصال — النسخة المحلية مشفّرة', 'warn');
+      this.scheduleRetry();
+    } finally {
+      this.pushing = false;
+      if (this.pendingPush && !this.conflict) {
+        this.pendingPush = false;
+        this.queuePush();
+      }
+    }
   },
 
   scheduleRetry() {
@@ -3036,24 +3080,34 @@ const Bridge = {
   },
 
   queuePush() {
-    if (!this.serverOn) return;
+    if (!this.serverOn || this._applyingRemote || this.conflict) return;
     clearTimeout(this._t);
     /* دفع شبه فوري: 250 مللي فقط لتجميع دفعات النقر السريعة */
     this._t = setTimeout(() => this.pushNow(), 250);
   },
 
   flushOnExit() {
-    /* إغلاق التبويب أو التنقل: لقطة أخيرة عبر sendBeacon لا تعيق الخروج.
-       المتصفحات تحدّد ~64KB للـbeacon — عند الفشل نجرب fetch keepalive كخطة بديلة */
-    try {
-      if (!this.serverOn) return;
-      const payload = JSON.stringify(NoorStore.dump());
-      let ok = false;
-      if (navigator.sendBeacon) {
-        try { ok = navigator.sendBeacon('/api/sync', new Blob([payload], { type: 'application/json' })); } catch (e) { ok = false; }
-      }
-      if (!ok) fetch('/api/sync', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Noor-Sync': '1' }, body: payload, keepalive: true }).catch(() => {});
-    } catch (e) {}
+    /* لقطة أخيرة مشفّرة فقط؛ لا يستخدم sendBeacon لأنه لا يضمن ترويسة رقم المراجعة. */
+    if (!this.serverOn || !NoorSecurity.isUnlocked() || this.conflict) return;
+    const bridge = this;
+    Promise.resolve().then(async function () {
+      try {
+        const expectedRevision = NoorSecurity.getRevision();
+        const encrypted = await NoorSecurity.makeSyncEnvelope();
+        const r = await fetch('/api/sync', {
+          method: 'POST', credentials: 'same-origin', keepalive: true,
+          headers: { 'Content-Type': 'application/json', 'If-Match': String(expectedRevision) },
+          body: JSON.stringify(encrypted)
+        });
+        const result = await r.json().catch(() => ({}));
+        if (r.ok && result.ok) {
+          NoorSecurity.setRevision(Number(result.revision));
+          NoorSecurity.rememberEncrypted(encrypted, Number(result.revision));
+          bridge.clearDirty();
+          NoorSecurity.purgeLegacyPlaintext();
+        }
+      } catch (_) {}
+    });
   },
 
   install() {
@@ -3062,7 +3116,15 @@ const Bridge = {
       window.addEventListener('pagehide', () => this.flushOnExit());
       /* العودة للتبويب أو رجوع الشبكة: نكتشف الخادم وندفع أي تغييرات غير مسلّمة فقط —
          لا reconcile كامل هنا كي لا تُمس بيانات عدّلت للتو أثناء غياب التبويب */
-      const rewire = () => { this.detect().then(() => { if (this.serverOn) { try { if (localStorage.getItem('noor_dirty') === '1') this.pushNow(); } catch (e) {} } }); };
+      const rewire = () => {
+        this.detect().then(() => {
+          if (this.serverOn) {
+            NoorSecurity.setOnline(true);
+            if (this.conflict) return;
+            try { if (localStorage.getItem('noor_dirty') === '1') this.pushNow(); } catch (e) {}
+          }
+        });
+      };
       window.addEventListener('online', rewire);
       document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') rewire(); });
     } catch (e) {}
