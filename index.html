@@ -195,6 +195,19 @@
   </div>
 </dialog>
 
+<dialog id="noor-conflict-dialog" aria-labelledby="noor-conflict-title">
+  <div class="noor-security-inner">
+    <div class="noor-security-title" id="noor-conflict-title">تعارض مزامنة — النسختان محفوظتان</div>
+    <p class="noor-security-desc" id="noor-conflict-detail">اكتشف نُور تعديلاً مختلفاً في جهاز آخر. لن يكتب النظام فوق أي نسخة دون اختيارك.</p>
+    <div class="noor-conflict-actions">
+      <button class="btn" type="button" onclick="resolveNoorConflict('local')">اعتماد نسخة هذا الجهاز</button>
+      <button class="btn btn-ghost" type="button" onclick="resolveNoorConflict('server')">اعتماد نسخة الخادم</button>
+      <button class="btn btn-ghost" type="button" onclick="resolveNoorConflict('export')">تنزيل نسخة الجهاز المشفّرة</button>
+    </div>
+    <p class="noor-security-desc">اعتماد نسخة جهازك يستبدل النسخة السحابية الحالية عمداً. خيار الخادم يُبقي نسخة جهازك الأخرى مشفّرة كنسخة احتياطية.</p>
+  </div>
+</dialog>
+
 <div id="toasts"></div>
 
         <script src="js/source-rules.js?v=1"></script>
