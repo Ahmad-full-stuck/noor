@@ -12,3 +12,9 @@ backups/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# بيانات المستخدم — لا تُرفع إلى Git
+noor.db
+uploads/
+backups/
+data/seed.json
