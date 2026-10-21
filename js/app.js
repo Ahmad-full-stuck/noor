@@ -2091,11 +2091,12 @@ function openProjectTasksModal(pid) {
     <p class="count" style="display:block;margin:10px 0">المهام داخلية متسلسلة: التالية غير المنجزة تظهر فقط في الأيام المسموحة.</p>
     <div class="pt-list">
       ${p.tasks.length ? p.tasks.map((pt, idx) => `
-        <div class="settings-item project">
+        <div class="settings-item project project-task-row">
           <span class="item-type">${pt.completed_at ? '✓' : String(idx + 1)}</span>
           <span class="item-title">${esc(pt.title)}</span>
           <span class="item-meta">${pt.completed_at ? 'منجزة' : 'بالتسلسل'}${pt.hours > 0 ? ` · ⏱ ${pt.hours} ساعة` : ''}${pt.sources.length ? ` · ${pt.sources.length} 📦 مصدر` : ''}</span>
           <div class="item-actions">
+            <button type="button" class="btn btn-xs pt-complete-btn" aria-pressed="${!!pt.completed_at}" onclick="toggleProjectTaskFromModal(${pid}, ${pt.id})" title="تغيير حالة الإنجاز" aria-label="تغيير حالة إنجاز المهمة">${pt.completed_at ? '↺ تراجع' : '✓ إنجاز'}</button>
             <button class="icon-btn" onclick="openProjectTaskModal(${pid}, ${pt.id})" title="تعديل">✎</button>
             <button class="icon-btn danger" onclick="archiveProjectTask(${pt.id})" title="أرشفة">✕</button>
           </div>
@@ -2105,6 +2106,21 @@ function openProjectTasksModal(pid) {
       <button class="btn" onclick="openProjectTaskModal(${pid})">+ مهمة جديدة</button>
       <button class="btn btn-ghost" onclick="closeModal()">إغلاق</button>
     </div>`);
+}
+
+
+/* إنجاز مهمة داخل نافذة المشروع دون إغلاقها — يسمح بإنجاز مهام متعددة تباعًا */
+async function toggleProjectTaskFromModal(pid, tid) {
+  try {
+    const task = NoorStore.toggleProjectTask(tid);
+    play(task.completed_at ? 'success' : 'tick');
+    if (state.page === 'projects') await renderProjects();
+    if (state.page === 'timer') renderSessionTasks();
+    openProjectTasksModal(pid);
+    showToast(task.completed_at ? 'تم إنجاز المهمة' : 'أُعيد فتح المهمة');
+  } catch (err) {
+    showToast(err.message || 'تعذر تحديث حالة المهمة', 'bad');
+  }
 }
 
 let taskSourceCount = 0;
